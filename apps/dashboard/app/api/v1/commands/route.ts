@@ -109,18 +109,46 @@ export async function POST(req: NextRequest) {
 
   const sb = serviceClient();
   const device = auth.device!;
-  // Update only if this command belongs to the calling device.
-  const { error } = await sb
+  // Update only if this command belongs to the calling device. We
+  // need `action` back so we can sync the corresponding `device`
+  // column — otherwise the UI shows stale "Pause" when the device
+  // is already paused, etc.
+  const nowIso = new Date().toISOString();
+  const { data: acked, error } = await sb
     .from('pending_command')
     .update({
-      completed_at: new Date().toISOString(),
+      completed_at: nowIso,
       result: parsed.data.result ?? null,
       error: parsed.data.error ?? null,
     })
     .eq('command_id', parsed.data.command_id)
-    .eq('device_id', device.device_id);
+    .eq('device_id', device.device_id)
+    .select('action')
+    .maybeSingle();
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // Sync device state off the ack, but only on success (no error on
+  // the agent side). Without this the `paused` / `revoked_at`
+  // columns drift from ground truth: the agent has the pause marker
+  // set, but `device.paused` stays false because nothing writes it.
+  if (acked && !parsed.data.error) {
+    const deviceUpdate: Record<string, unknown> | null =
+      acked.action === 'pause'
+        ? { paused: true }
+        : acked.action === 'resume'
+          ? { paused: false }
+          : acked.action === 'revoke'
+            ? { revoked_at: nowIso, paused: false }
+            : null;
+    if (deviceUpdate) {
+      await sb
+        .from('device')
+        .update(deviceUpdate)
+        .eq('device_id', device.device_id)
+        .eq('firm_id', device.firm_id);
+    }
   }
   return new NextResponse(null, { status: 204 });
 }

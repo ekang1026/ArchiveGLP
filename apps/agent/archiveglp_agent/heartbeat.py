@@ -48,6 +48,10 @@ def build_heartbeat(cfg: AgentConfig, state: State, now: datetime | None = None)
         last_captured_at=_last_captured_at_from_rowid(state),
         queue_depth=state.queue_depth(),
         clock_skew_ms=0,
+        # Mirror the pump's pause marker up to the dashboard so the
+        # remediation UI shows the correct "Pause / Resume" button
+        # without waiting for a command-ack round-trip.
+        paused=(cfg.state_dir / "paused").exists(),
     )
 
 

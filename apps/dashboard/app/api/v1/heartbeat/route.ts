@@ -47,17 +47,23 @@ export async function POST(req: NextRequest) {
   }
 
   const sb = serviceClient();
+  const update: Record<string, unknown> = {
+    last_heartbeat_at: hb.reported_at,
+    last_captured_at: hb.last_captured_at,
+    status: hb.status,
+    queue_depth: hb.queue_depth,
+    clock_skew_ms: hb.clock_skew_ms,
+    os_version: hb.os_version,
+    agent_version: hb.agent_version,
+  };
+  // Optional fields: only overwrite the DB when the agent reported a
+  // value. Without this guard, an older agent that doesn't send
+  // `paused` would clear the column on every heartbeat — and the
+  // remediation UI would show "Pause" after we had paused.
+  if (hb.paused !== undefined) update.paused = hb.paused;
   const { error } = await sb
     .from('device')
-    .update({
-      last_heartbeat_at: hb.reported_at,
-      last_captured_at: hb.last_captured_at,
-      status: hb.status,
-      queue_depth: hb.queue_depth,
-      clock_skew_ms: hb.clock_skew_ms,
-      os_version: hb.os_version,
-      agent_version: hb.agent_version,
-    })
+    .update(update)
     .eq('device_id', device.device_id)
     .eq('firm_id', device.firm_id);
   if (error) {

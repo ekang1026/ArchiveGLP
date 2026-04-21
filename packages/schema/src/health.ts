@@ -22,5 +22,9 @@ export const Heartbeat = z.object({
   last_captured_at: z.string().datetime().nullable(),
   queue_depth: z.number().int().nonnegative(),
   clock_skew_ms: z.number().int(),
+  // Agent-observed local state. Optional so older agents still pass
+  // validation; handler leaves existing DB values untouched when
+  // omitted. Paired with server-side ack sync for belt-and-suspenders.
+  paused: z.boolean().optional(),
 });
 export type Heartbeat = z.infer<typeof Heartbeat>;

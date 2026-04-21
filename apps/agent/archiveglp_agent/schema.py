@@ -107,3 +107,4 @@ class Heartbeat(BaseModel):
     last_captured_at: datetime | None
     queue_depth: int = Field(ge=0)
     clock_skew_ms: int
+    paused: bool | None = None

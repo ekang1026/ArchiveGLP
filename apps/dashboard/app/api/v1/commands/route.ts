@@ -8,13 +8,22 @@ export const runtime = 'nodejs';
 
 /**
  * GET  /api/v1/commands - fetch queued commands for the authenticated device.
- *                        Marks fetched commands delivered_at=now.
- * POST /api/v1/commands/<id>/ack - agent acks a command's result.
+ * POST /api/v1/commands    - agent acks a command's result.
  *
- * The agent polls GET on each heartbeat. Each command is returned once
- * (filtered by delivered_at IS NULL) to avoid running it repeatedly
- * across restarts. The ack endpoint stamps completed_at + result/error.
+ * Delivery semantics are at-least-once. A command is (re-)returned to
+ * the polling agent while it remains `completed_at IS NULL` and either
+ * was never delivered or was last delivered more than
+ * REDELIVERY_WINDOW_SECONDS ago. Each GET bumps `delivery_attempts`
+ * and sets `last_delivered_at`. The agent must suppress duplicate
+ * side-effects by command_id (it maintains a local executed-command
+ * log) — otherwise a lost response followed by redelivery would run
+ * the same action twice.
  */
+
+// Server will re-offer an uncompleted command after this long. Must be
+// comfortably longer than one agent poll interval so the normal path
+// (agent receives -> executes -> acks) doesn't trigger redelivery.
+const REDELIVERY_WINDOW_SECONDS = 90;
 
 export async function GET(req: NextRequest) {
   const auth = await authenticateAgentRequest(req, '/v1/commands');
@@ -24,12 +33,14 @@ export async function GET(req: NextRequest) {
   const device = auth.device!;
   const sb = serviceClient();
 
+  const cutoffIso = new Date(Date.now() - REDELIVERY_WINDOW_SECONDS * 1000).toISOString();
+
   const { data, error } = await sb
     .from('pending_command')
-    .select('command_id, action, parameters, issued_at')
+    .select('command_id, action, parameters, issued_at, delivery_attempts')
     .eq('device_id', device.device_id)
-    .is('delivered_at', null)
     .is('completed_at', null)
+    .or(`last_delivered_at.is.null,last_delivered_at.lt.${cutoffIso}`)
     .order('issued_at', { ascending: true })
     .limit(20);
   if (error) {
@@ -38,14 +49,25 @@ export async function GET(req: NextRequest) {
   const commands = data ?? [];
 
   if (commands.length > 0) {
-    const ids = commands.map((c) => c.command_id);
-    await sb
-      .from('pending_command')
-      .update({ delivered_at: new Date().toISOString() })
-      .in('command_id', ids);
+    const nowIso = new Date().toISOString();
+    await Promise.all(
+      commands.map((c) =>
+        sb
+          .from('pending_command')
+          .update({
+            last_delivered_at: nowIso,
+            delivered_at: c.delivery_attempts > 0 ? undefined : nowIso,
+            delivery_attempts: (c.delivery_attempts ?? 0) + 1,
+          })
+          .eq('command_id', c.command_id),
+      ),
+    );
   }
 
-  return NextResponse.json({ commands });
+  // Strip delivery_attempts from the client-facing response; agent
+  // doesn't need it and it isn't part of the wire contract.
+  const outbound = commands.map(({ delivery_attempts: _a, ...rest }) => rest);
+  return NextResponse.json({ commands: outbound });
 }
 
 const AckBody = z.object({

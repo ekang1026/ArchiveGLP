@@ -21,6 +21,19 @@ CREATE TABLE IF NOT EXISTS outbound (
 );
 
 CREATE INDEX IF NOT EXISTS outbound_next_try_idx ON outbound (next_try_at);
+
+-- Record of remediation commands the agent has already executed, keyed
+-- by server command_id. The server re-delivers commands whose acks it
+-- didn't record; the agent uses this log to suppress duplicate side-
+-- effects (running revoke twice, rebooting twice, etc.) while still
+-- re-acking so the server can close the loop.
+CREATE TABLE IF NOT EXISTS executed_command (
+    command_id  TEXT PRIMARY KEY,
+    action      TEXT NOT NULL,
+    executed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    result_json TEXT,
+    error_text  TEXT
+);
 """
 
 
@@ -93,6 +106,29 @@ class State:
     def max_attempts(self) -> int:
         row = self._conn.execute("SELECT COALESCE(MAX(attempts), 0) AS a FROM outbound").fetchone()
         return int(row["a"])
+
+    # ---- Executed-command log (idempotent remediation) ----
+
+    def was_command_executed(self, command_id: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            "SELECT command_id, action, result_json, error_text "
+            "FROM executed_command WHERE command_id = ?",
+            (command_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def record_command_executed(
+        self,
+        command_id: str,
+        action: str,
+        result_json: str | None,
+        error_text: str | None,
+    ) -> None:
+        self._conn.execute(
+            "INSERT OR IGNORE INTO executed_command "
+            "(command_id, action, result_json, error_text) VALUES (?, ?, ?, ?)",
+            (command_id, action, result_json, error_text),
+        )
 
     def close(self) -> None:
         self._conn.close()

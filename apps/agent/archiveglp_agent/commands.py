@@ -174,6 +174,36 @@ class CommandExecutor:
         cid = str(command.get("command_id", ""))
         action = str(command.get("action", ""))
         log.info("commands.execute", command_id=cid, action=action)
+
+        # Idempotency: server may re-deliver commands whose acks were
+        # lost. If we already ran this one, re-ack (so the server can
+        # close the loop) but skip side-effects. The replayed ack uses
+        # whatever result/error we recorded originally, so the
+        # supervisor-visible row stays stable.
+        prior = self._state.was_command_executed(cid) if cid else None
+        if prior is not None:
+            log.info("commands.replay_suppressed", command_id=cid, action=action)
+            result_json = prior.get("result_json")
+            error_text = prior.get("error_text")
+            result: dict[str, Any] | None = None
+            if result_json:
+                try:
+                    result = json.loads(result_json)
+                except json.JSONDecodeError:
+                    result = None
+            await self.ack(cid, result=result, error=error_text)
+            return
+
+        def _record(
+            result: dict[str, Any] | None = None, error: str | None = None
+        ) -> None:
+            self._state.record_command_executed(
+                cid,
+                action,
+                json.dumps(result) if result is not None else None,
+                error,
+            )
+
         try:
             if action == "resync":
                 result: dict[str, Any] = self._do_resync()
@@ -182,6 +212,11 @@ class CommandExecutor:
             elif action == "resume":
                 result = self._do_resume()
             elif action == "revoke":
+                # Record BEFORE the destructive side-effect so a post-
+                # revoke replay (unlikely: state dir is wiped) would at
+                # least not re-wipe — and because record + ack is our
+                # canonical "ran it" marker everywhere else.
+                _record(result={"revoked": True})
                 result = self._do_revoke()
                 await self.ack(cid, result=result)
                 # After revoke the agent can't sign anything further
@@ -189,10 +224,11 @@ class CommandExecutor:
                 # SystemExit so the run loop terminates cleanly.
                 raise SystemExit(0)
             elif action == "restart_agent":
-                # Ack BEFORE re-exec: after os.execv the Python
-                # interpreter is replaced and any pending HTTP
-                # response would be dropped on the floor. Give the
-                # TCP write a brief moment to flush.
+                # Record + ack BEFORE re-exec so the post-restart poll
+                # sees the command as already-executed and replay-
+                # suppresses it. Without this, a lost ack would cause
+                # an infinite re-exec loop on every redelivery cycle.
+                _record(result={"restarting": True})
                 await self.ack(cid, result={"restarting": True})
                 await asyncio.sleep(0.5)
                 log.warning(
@@ -207,9 +243,12 @@ class CommandExecutor:
                 # unreachable
                 return
             elif action == "restart_machine":
-                # Ack FIRST so the dashboard records the command as
-                # accepted. The reboot itself is asynchronous — macOS
-                # will begin shutdown after osascript returns.
+                # Record + ack FIRST so a lost ack + reboot + redelivery
+                # doesn't reboot the machine twice. Without the record
+                # the agent would see the redelivered command after
+                # boot, execute it, and reboot again — an infinite
+                # reboot loop on any device whose first ack was lost.
+                _record(result={"restart_requested": True})
                 await self.ack(cid, result={"restart_requested": True})
                 await asyncio.sleep(1.0)
                 self._do_restart_machine()
@@ -218,16 +257,20 @@ class CommandExecutor:
                 # the user to save).
                 raise SystemExit(0)
             elif action in {"rotate_key", "upgrade"}:
+                _record(error=f"{action} not implemented")
                 await self.ack(cid, error=f"{action} not implemented")
                 return
             else:
+                _record(error=f"unknown action: {action}")
                 await self.ack(cid, error=f"unknown action: {action}")
                 return
+            _record(result=result)
             await self.ack(cid, result=result)
         except SystemExit:
             raise
         except Exception as exc:  # noqa: BLE001
             log.exception("commands.execute_failed", command_id=cid, action=action)
+            _record(error=str(exc))
             await self.ack(cid, error=str(exc))
 
     async def run_forever(self, interval_seconds: float = 30.0) -> None:

@@ -202,6 +202,87 @@ async def test_restart_machine_osascript_failure_is_reported(
 
 
 @pytest.mark.asyncio
+async def test_replay_suppresses_side_effects_but_still_acks(agent_cfg, device_key):
+    """Server redelivers commands whose ack was lost. Agent must not re-run."""
+    state = _fresh_state(agent_cfg)
+
+    async with httpx.AsyncClient() as client:
+        cmd = CommandExecutor(agent_cfg, state, client, device_key)
+
+        # First delivery: pause runs and creates the marker.
+        with respx.mock(base_url=agent_cfg.api_base_url) as m:
+            m.post("/v1/commands").respond(204)
+            await cmd.execute(
+                {"command_id": "00000000-0000-0000-0000-0000000000aa", "action": "pause"},
+            )
+        paused = agent_cfg.state_dir / "paused"
+        assert paused.exists()
+
+        # Between deliveries, user manually resumes so we can tell if
+        # the replay re-applies the pause side-effect. (It must not.)
+        paused.unlink()
+
+        # Redelivery of the same command_id: ack must fire but marker
+        # must stay absent.
+        with respx.mock(base_url=agent_cfg.api_base_url) as m:
+            ack = m.post("/v1/commands").respond(204)
+            await cmd.execute(
+                {"command_id": "00000000-0000-0000-0000-0000000000aa", "action": "pause"},
+            )
+            assert ack.called, "replay should still ack so server can close the loop"
+        assert not paused.exists(), "replay must not re-apply side-effect"
+    state.close()
+
+
+@pytest.mark.asyncio
+async def test_replay_of_restart_machine_does_not_reboot_twice(
+    agent_cfg, device_key, monkeypatch,
+):
+    state = _fresh_state(agent_cfg)
+    run_calls: list[list[str]] = []
+
+    class FakeCompleted:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    def fake_run(args, **kwargs):  # noqa: ANN001, ANN003
+        run_calls.append(list(args))
+        return FakeCompleted()
+
+    monkeypatch.setattr("archiveglp_agent.commands.subprocess.run", fake_run)
+
+    async with httpx.AsyncClient() as client:
+        cmd = CommandExecutor(agent_cfg, state, client, device_key)
+
+        with respx.mock(base_url=agent_cfg.api_base_url) as m:
+            m.post("/v1/commands").respond(204)
+            with pytest.raises(SystemExit):
+                await cmd.execute(
+                    {
+                        "command_id": "00000000-0000-0000-0000-0000000000bb",
+                        "action": "restart_machine",
+                    },
+                )
+        assert len(run_calls) == 1
+
+        # Simulate post-reboot redelivery (ack was "lost" from server's
+        # perspective): executor sees the same command id again. Must
+        # NOT reboot again — this is the infinite-reboot prevention.
+        with respx.mock(base_url=agent_cfg.api_base_url) as m:
+            ack = m.post("/v1/commands").respond(204)
+            await cmd.execute(
+                {
+                    "command_id": "00000000-0000-0000-0000-0000000000bb",
+                    "action": "restart_machine",
+                },
+            )
+            assert ack.called
+        assert len(run_calls) == 1, "osascript must not run on replay"
+    state.close()
+
+
+@pytest.mark.asyncio
 async def test_poll_returns_commands_list(agent_cfg, device_key):
     state = _fresh_state(agent_cfg)
     async with httpx.AsyncClient() as client:

@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ts:
+    name: typescript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @archiveglp/schema build
+      - run: pnpm --filter @archiveglp/schema test
+      - run: pnpm --filter @archiveglp/infra build
+      - run: pnpm --filter @archiveglp/infra test
+      - run: pnpm --filter @archiveglp/api typecheck
+      - run: pnpm --filter @archiveglp/api test
+      - run: pnpm --filter @archiveglp/api build
+      - run: pnpm --filter @archiveglp/dashboard typecheck
+      - run: pnpm --filter @archiveglp/dashboard build
+
+  py:
+    name: python agent
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e '.[dev]'
+      - run: ruff check archiveglp_agent tests
+      - run: pytest -q

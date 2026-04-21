@@ -9,7 +9,7 @@
     "start": "next start",
     "typecheck": "tsc -b --noEmit",
     "lint": "next lint",
-    "test": "vitest run"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@archiveglp/schema": "workspace:*",

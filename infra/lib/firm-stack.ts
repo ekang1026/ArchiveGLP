@@ -32,12 +32,14 @@ export class FirmStack extends cdk.Stack {
 
     const storage = new Storage(this, 'Storage', { firm: props.firm });
     const queue = new Queue(this, 'Queue', { archiveKey: storage.archiveKey });
-    new Database(this, 'Db', { vpc, archiveKey: storage.archiveKey });
+    const db = new Database(this, 'Db', { vpc, archiveKey: storage.archiveKey });
     new Auth(this, 'Auth', { firm: props.firm });
     new Api(this, 'Api', {
       firm: props.firm,
       ingestQueue: queue.ingestQueue,
       archiveKey: storage.archiveKey,
+      archiveBucket: storage.archiveBucket,
+      dbCluster: db.cluster,
     });
 
     // SEC 17a-4(f)(3)(v) Designated Third Party: a read-only role assumable

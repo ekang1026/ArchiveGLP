@@ -98,4 +98,29 @@ describe('FirmStack compliance posture', () => {
       FifoQueue: true,
     });
   });
+
+  it('enables RDS Data API on the Aurora cluster', () => {
+    const template = synth();
+    template.hasResourceProperties('AWS::RDS::DBCluster', {
+      EnableHttpEndpoint: true,
+    });
+  });
+
+  it('provisions ingest, archiver, and heartbeat Lambdas', () => {
+    const template = synth();
+    template.resourceCountIs('AWS::Lambda::Function', 3);
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Handler: 'archiver.handler',
+    });
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Handler: 'heartbeat.handler',
+    });
+  });
+
+  it('wires the archiver as an SQS event source', () => {
+    const template = synth();
+    template.hasResourceProperties('AWS::Lambda::EventSourceMapping', {
+      FunctionResponseTypes: ['ReportBatchItemFailures'],
+    });
+  });
 });

@@ -42,6 +42,7 @@ export class Database extends Construct {
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [this.securityGroup],
       iamAuthentication: true,
+      enableDataApi: true,
       storageEncrypted: true,
       storageEncryptionKey: props.archiveKey,
       backup: {

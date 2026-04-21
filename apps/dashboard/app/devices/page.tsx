@@ -28,7 +28,7 @@ export default async function DevicesPage() {
   const { data: rows, error } = await sb
     .from('device')
     .select(
-      'device_id, employee_id, hostname, os_version, agent_version, status, last_heartbeat_at, queue_depth, disk_free_gb, memory_free_mb, messages_app_running, fda_status, clock_skew_ms, paused, revoked_at',
+      'device_id, employee_id, hostname, os_version, agent_version, status, last_heartbeat_at, last_captured_at, enrolled_at, queue_depth, disk_free_gb, memory_free_mb, messages_app_running, fda_status, clock_skew_ms, paused, revoked_at',
     )
     .eq('firm_id', cfg.FIRM_ID)
     .order('last_heartbeat_at', { ascending: true, nullsFirst: true });
@@ -56,6 +56,7 @@ export default async function DevicesPage() {
     total: annotated.length,
     healthy: 0,
     warning: 0,
+    silent: 0,
     critical: 0,
     paused: 0,
     revoked: 0,
@@ -81,6 +82,7 @@ export default async function DevicesPage() {
         <SummaryCard label="Total" value={counts.total} level={null} />
         <SummaryCard label="Healthy" value={counts.healthy} level="healthy" />
         <SummaryCard label="Warning" value={counts.warning} level="warning" />
+        <SummaryCard label="Silent" value={counts.silent} level="silent" />
         <SummaryCard label="Critical" value={counts.critical} level="critical" />
         <SummaryCard label="Paused" value={counts.paused} level="paused" />
         <SummaryCard label="Revoked" value={counts.revoked} level="revoked" />

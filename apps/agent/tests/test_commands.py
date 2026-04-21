@@ -416,6 +416,72 @@ async def test_rejects_command_for_different_device_id(
 
 
 @pytest.mark.asyncio
+async def test_diagnose_returns_structured_snapshot(
+    agent_cfg, device_key, server_signer, monkeypatch,
+):
+    """diagnose should never fail the whole command even if probes err."""
+    state = _fresh_state(agent_cfg)
+
+    class FakeCompleted:
+        returncode = 0
+        stdout = "1234\n"
+        stderr = ""
+
+    def fake_run(args, **kwargs):  # noqa: ANN001, ANN003
+        return FakeCompleted()
+
+    monkeypatch.setattr("archiveglp_agent.commands.subprocess.run", fake_run)
+
+    async with httpx.AsyncClient() as client:
+        cmd = _executor(agent_cfg, state, client, device_key, server_signer)
+        with respx.mock(base_url=agent_cfg.api_base_url) as m:
+            route = m.post("/v1/commands").respond(204)
+            await cmd.execute(
+                _signed(server_signer, agent_cfg,
+                        "00000000-0000-0000-0000-0000000000d1", "diagnose"),
+            )
+            posted = route.calls[0].request.content
+    # Snapshot includes at least queue_depth, last_rowid, paused, and
+    # the agent_version — regardless of Messages.app probe outcome.
+    assert b'"queue_depth"' in posted
+    assert b'"last_rowid"' in posted
+    assert b'"paused"' in posted
+    assert b'"agent_version"' in posted
+    state.close()
+
+
+@pytest.mark.asyncio
+async def test_diagnose_has_no_side_effects_on_state(
+    agent_cfg, device_key, server_signer, monkeypatch,
+):
+    """Diagnose must not pause, resync, or mutate anything."""
+    state = _fresh_state(agent_cfg)
+    before_rowid = state.get_last_rowid()
+
+    def fake_run(args, **kwargs):  # noqa: ANN001, ANN003
+        class R:
+            returncode = 1  # pgrep no-match
+            stdout = ""
+            stderr = ""
+
+        return R()
+
+    monkeypatch.setattr("archiveglp_agent.commands.subprocess.run", fake_run)
+
+    async with httpx.AsyncClient() as client:
+        cmd = _executor(agent_cfg, state, client, device_key, server_signer)
+        with respx.mock(base_url=agent_cfg.api_base_url) as m:
+            m.post("/v1/commands").respond(204)
+            await cmd.execute(
+                _signed(server_signer, agent_cfg,
+                        "00000000-0000-0000-0000-0000000000d2", "diagnose"),
+            )
+    assert state.get_last_rowid() == before_rowid
+    assert not (agent_cfg.state_dir / "paused").exists()
+    state.close()
+
+
+@pytest.mark.asyncio
 async def test_poll_returns_commands_list(agent_cfg, device_key, server_signer):
     state = _fresh_state(agent_cfg)
     async with httpx.AsyncClient() as client:

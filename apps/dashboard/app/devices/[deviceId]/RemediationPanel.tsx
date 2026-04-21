@@ -3,7 +3,14 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
-type Action = 'resync' | 'pause' | 'resume' | 'restart_agent' | 'restart_machine' | 'revoke';
+type Action =
+  | 'diagnose'
+  | 'resync'
+  | 'pause'
+  | 'resume'
+  | 'restart_agent'
+  | 'restart_machine'
+  | 'revoke';
 
 interface Props {
   deviceId: string;
@@ -23,6 +30,14 @@ interface ActionSpec {
 }
 
 const SPECS: ActionSpec[] = [
+  {
+    action: 'diagnose',
+    label: 'Diagnose',
+    description:
+      'Ask the agent to report chat.db mtime, Messages.app process status, queue depth, and FDA status. Read-only — no side effects. Use when the device is "silent" but heartbeating.',
+    destructive: false,
+    visible: (p) => !p.revoked,
+  },
   {
     action: 'resync',
     label: 'Resync from start',

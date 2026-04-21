@@ -11,6 +11,11 @@ result or error. On each tick we:
 
 Supported actions in the MVP:
 
+  diagnose        Cheap, read-only probe: chat.db mtime + size, Messages.app
+                  process running, queue depth, last processed rowid, FDA /
+                  pause state. Returns the snapshot in `result` so the
+                  supervisor can see at a glance why the device looks
+                  "silent" (heartbeat fresh but no captures). No side effects.
   resync          Reset the pump checkpoint so the agent re-reads all
                   chat.db rows from the beginning. Used when a supervisor
                   wants to force re-capture after fixing a decoding bug.
@@ -155,6 +160,62 @@ class CommandExecutor:
         log.warning("commands.revoke.done", state_dir=str(state_dir))
         return {"revoked": True}
 
+    def _do_diagnose(self) -> dict[str, Any]:
+        """Cheap, read-only snapshot for supervisor-visible debugging.
+
+        Invoked when the dashboard flags the device as "silent" (heartbeat
+        fresh but last_captured_at stale). Each check is best-effort and
+        wrapped; one broken probe doesn't poison the whole report.
+        """
+        result: dict[str, Any] = {}
+
+        # chat.db existence + mtime. If the file vanished or can't be
+        # stat'd (sandbox, FDA revoked) that's directly actionable.
+        try:
+            st = self._cfg.chatdb_path.stat()
+            result["chatdb_exists"] = True
+            result["chatdb_mtime"] = st.st_mtime
+            result["chatdb_size_bytes"] = st.st_size
+        except FileNotFoundError:
+            result["chatdb_exists"] = False
+        except PermissionError as exc:
+            result["chatdb_exists"] = True
+            result["chatdb_permission_error"] = str(exc)
+
+        # Messages.app process. `pgrep -x Messages` returns 0 if one
+        # match; 1 if none; 2 on syntax error. We only care about
+        # presence. Short timeout so a hung launchd doesn't block.
+        try:
+            completed = subprocess.run(
+                ["/usr/bin/pgrep", "-x", "Messages"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            result["messages_app_running"] = completed.returncode == 0
+            if completed.returncode == 0:
+                result["messages_app_pids"] = [
+                    int(p) for p in completed.stdout.split() if p.strip().isdigit()
+                ]
+        except (OSError, subprocess.SubprocessError) as exc:
+            result["messages_app_probe_error"] = str(exc)
+
+        # Agent-local state: queue depth + last processed rowid. Tells
+        # supervisor whether the pump is reading chat.db rows but
+        # stalling on upload, vs. not reading at all.
+        try:
+            result["queue_depth"] = self._state.queue_depth()
+            result["last_rowid"] = self._state.get_last_rowid()
+        except Exception as exc:  # noqa: BLE001
+            result["state_probe_error"] = str(exc)
+
+        result["paused"] = self._paused_marker.exists()
+        result["agent_version"] = self._cfg.agent_version
+
+        log.info("commands.diagnose.done", result=result)
+        return result
+
     def _do_restart_machine(self) -> dict[str, Any]:
         # No sudo, no admin. Works because osascript driving System
         # Events is privileged enough to request a restart for the
@@ -257,8 +318,10 @@ class CommandExecutor:
             )
 
         try:
-            if action == "resync":
-                result: dict[str, Any] = self._do_resync()
+            if action == "diagnose":
+                result: dict[str, Any] = self._do_diagnose()
+            elif action == "resync":
+                result = self._do_resync()
             elif action == "pause":
                 result = self._do_pause()
             elif action == "resume":

@@ -35,6 +35,7 @@ const Action = z.enum([
   'upgrade',
   'restart_agent',
   'restart_machine',
+  'diagnose',
 ]);
 type Action = z.infer<typeof Action>;
 

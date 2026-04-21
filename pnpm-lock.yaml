@@ -60,6 +60,9 @@ importers:
       '@archiveglp/schema':
         specifier: workspace:*
         version: link:../../packages/schema
+      '@aws-sdk/client-rds-data':
+        specifier: ^3.700.0
+        version: 3.1033.0
       amazon-cognito-identity-js:
         specifier: ^6.3.14
         version: 6.3.16

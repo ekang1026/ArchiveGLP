@@ -1,20 +1,11 @@
 import { z } from 'zod';
-import { execute, json, str } from './db';
-import { serverEnv } from './env';
+import { serverConfig, serviceClient } from './supabase';
 
 /**
- * Append-only supervisor-action log.
+ * Append-only supervisor-action log (Supabase variant).
  *
- * Every search, message view, and export performed by a supervisor on
- * this dashboard writes a row here. Supervisors cannot write directly;
- * callers use recordAudit() after auth verification.
- *
- * NOTE: For full SEC 17a-4(f) compliance the audit rows ALSO need to
- * land in S3 Object Lock. That's a separate downstream job (read new
- * rows, archive, mark `s3_bucket/s3_key`); this function only writes
- * the Postgres row. The rows are never updated or deleted - same
- * retention posture, weaker durability guarantees until the S3 step
- * is added.
+ * Mutable Postgres table; S3-Object-Lock-backed WORM archival of audit
+ * rows is the tier-2 compliance upgrade, not wired here. See README.
  */
 
 export const AuditActorType = z.enum(['supervisor', 'd3p', 'system']);
@@ -26,6 +17,7 @@ export const AuditAction = z.enum([
   'message_view',
   'messages_export',
   'device_list_view',
+  'command_issued',
   'login',
 ]);
 export type AuditAction = z.infer<typeof AuditAction>;
@@ -40,21 +32,15 @@ export interface RecordAuditInput {
 }
 
 export async function recordAudit(input: RecordAuditInput): Promise<void> {
-  const env = serverEnv();
-  await execute(
-    `INSERT INTO audit_log (
-       firm_id, actor_type, actor_id, action, target_type, target_id, metadata
-     ) VALUES (
-       :firm_id, :actor_type, :actor_id, :action, :target_type, :target_id, :metadata::jsonb
-     )`,
-    [
-      str('firm_id', env.FIRM_ID),
-      str('actor_type', input.actorType),
-      str('actor_id', input.actorId),
-      str('action', input.action),
-      str('target_type', input.targetType ?? null),
-      str('target_id', input.targetId ?? null),
-      json('metadata', input.metadata ?? {}),
-    ],
-  );
+  const cfg = serverConfig();
+  const sb = serviceClient();
+  await sb.from('audit_log').insert({
+    firm_id: cfg.FIRM_ID,
+    actor_type: input.actorType,
+    actor_id: input.actorId,
+    action: input.action,
+    target_type: input.targetType ?? null,
+    target_id: input.targetId ?? null,
+    metadata: input.metadata ?? {},
+  });
 }

@@ -20,7 +20,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         >
           <strong>{env.NEXT_PUBLIC_APP_NAME}</strong>
           <span style={{ color: '#666' }}>
-            {env.NEXT_PUBLIC_FIRM_ID ?? 'unbound-firm'}
+            {process.env.FIRM_ID ?? 'unbound-firm'}
           </span>
         </header>
         <main style={{ padding: 20 }}>{children}</main>

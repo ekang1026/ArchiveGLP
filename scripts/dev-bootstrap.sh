@@ -119,7 +119,10 @@ if [ ! -f "$KEY_DER" ]; then
 else
     c_yellow "Reusing existing $KEY_DER"
 fi
-CMD_SIGN_B64="$(base64 -w0 "$KEY_DER" 2>/dev/null || base64 -b0 "$KEY_DER")"
+# `openssl base64 -A` is uniform across mac + linux. GNU base64 wants
+# `-w0` for no line breaks; BSD/mac base64 wants `-i` before the file
+# and doesn't know `-w`. Going through openssl avoids that whole mess.
+CMD_SIGN_B64="$(openssl base64 -A -in "$KEY_DER")"
 
 # --- 6. Write .env.local if missing ----------------------------------
 

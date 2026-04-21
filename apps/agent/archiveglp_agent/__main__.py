@@ -13,6 +13,7 @@ from . import __version__
 from .checkpoint import State
 from .config import AgentConfig
 from .forwarder import Forwarder
+from .heartbeat import HeartbeatEmitter
 from .pump import CapturePump
 
 log = structlog.get_logger(__name__)
@@ -46,7 +47,12 @@ def run() -> None:
     async def _go() -> None:
         async with httpx.AsyncClient() as client:
             forwarder = Forwarder(state, cfg.api_base_url, client)
-            await asyncio.gather(pump.run_forever(), forwarder.run_forever(cfg.batch_size))
+            heartbeat = HeartbeatEmitter(cfg, state, client)
+            await asyncio.gather(
+                pump.run_forever(),
+                forwarder.run_forever(cfg.batch_size),
+                heartbeat.run_forever(),
+            )
 
     try:
         asyncio.run(_go())

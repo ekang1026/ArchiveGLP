@@ -25,6 +25,7 @@ CREATE TABLE message (
     ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
     guid TEXT,
     text TEXT,
+    attributedBody BLOB,
     date INTEGER,
     date_edited INTEGER,
     handle_id INTEGER,

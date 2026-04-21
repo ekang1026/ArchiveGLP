@@ -65,7 +65,8 @@ async function buildChatDbFixture(path: string): Promise<void> {
     CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT, chat_identifier TEXT, display_name TEXT);
     CREATE TABLE message (
       ROWID INTEGER PRIMARY KEY AUTOINCREMENT,
-      guid TEXT, text TEXT, date INTEGER, date_edited INTEGER,
+      guid TEXT, text TEXT, attributedBody BLOB,
+      date INTEGER, date_edited INTEGER,
       handle_id INTEGER, is_from_me INTEGER, service TEXT,
       item_type INTEGER DEFAULT 0,
       associated_message_guid TEXT, associated_message_type INTEGER

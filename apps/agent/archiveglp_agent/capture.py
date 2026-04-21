@@ -50,11 +50,17 @@ def open_chatdb(path: Path) -> Iterator[sqlite3.Connection]:
 
 # Core query. Joins message to chat/handle so we get conversation + counterparties
 # in one pass. Ordered by ROWID so pagination by ROWID is monotonic.
+#
+# attributedBody is a BLOB containing the NSArchiver/typedstream serialization
+# of the NSAttributedString that Messages.app on macOS uses instead of `text`
+# for messages composed in the app. We decode it in normalize.py when `text`
+# is NULL/empty.
 _CAPTURE_SQL = """
 SELECT
     m.ROWID                      AS rowid,
     m.guid                       AS guid,
     m.text                       AS text,
+    m.attributedBody             AS attributed_body,
     m.date                       AS date_apple_ns,
     m.date_edited                AS date_edited_apple_ns,
     m.is_from_me                 AS is_from_me,

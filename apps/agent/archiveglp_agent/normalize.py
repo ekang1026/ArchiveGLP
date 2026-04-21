@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from .attributed_body import decode_attributed_body
 from .capture import apple_ns_to_datetime
 from .config import AgentConfig
 from .schema import Handle, Message
@@ -26,7 +27,14 @@ def normalize_row(row: dict[str, Any], cfg: AgentConfig) -> Message | None:
     if item_type != 0:
         return None
 
+    # Messages.app on macOS composes into attributedBody (an NSAttributedString
+    # typedstream blob) instead of the plain text column. Prefer text if set,
+    # fall back to the decoded blob, then to empty string.
     text = row.get("text") or ""
+    if not text:
+        decoded = decode_attributed_body(row.get("attributed_body"))
+        if decoded:
+            text = decoded
     captured_at = apple_ns_to_datetime(row.get("date_apple_ns")) or datetime.now(UTC)
 
     is_from_me = bool(row.get("is_from_me"))
@@ -75,7 +83,13 @@ def normalize_row(row: dict[str, Any], cfg: AgentConfig) -> Message | None:
             ),
             "unsent": unsent,
             "attachments": [],
-            "raw_source": {k: v for k, v in row.items() if v is not None},
+            # Drop bytes columns (attributedBody is a BLOB) so JSON
+            # serialization of raw_source stays clean.
+            "raw_source": {
+                k: v
+                for k, v in row.items()
+                if v is not None and not isinstance(v, (bytes, bytearray))
+            },
         }
     )
     return msg

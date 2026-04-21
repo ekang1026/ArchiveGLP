@@ -1,0 +1,24 @@
+{
+  "name": "@archiveglp/api",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/ingest.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/ingest.mjs --banner:js=\"import{createRequire}from'module';const require=createRequire(import.meta.url);\"",
+    "typecheck": "tsc -b --noEmit",
+    "test": "vitest run",
+    "lint": "biome check src"
+  },
+  "dependencies": {
+    "@archiveglp/schema": "workspace:*",
+    "@aws-sdk/client-sqs": "^3.700.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.147",
+    "@types/node": "^22.10.5",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

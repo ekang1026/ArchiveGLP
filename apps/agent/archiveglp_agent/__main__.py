@@ -11,6 +11,7 @@ import structlog
 
 from . import __version__
 from .checkpoint import State
+from .commands import CommandExecutor
 from .config import AgentConfig
 from .enroll import DISCLOSURES, EnrollmentInput, enroll
 from .forwarder import Forwarder
@@ -55,10 +56,12 @@ def run() -> None:
         async with httpx.AsyncClient() as client:
             forwarder = Forwarder(state, cfg.api_base_url, client, cfg.device_id, private_key)
             heartbeat = HeartbeatEmitter(cfg, state, client, private_key)
+            commands = CommandExecutor(cfg, state, client, private_key)
             await asyncio.gather(
                 pump.run_forever(),
                 forwarder.run_forever(cfg.batch_size),
                 heartbeat.run_forever(),
+                commands.run_forever(),
             )
 
     try:

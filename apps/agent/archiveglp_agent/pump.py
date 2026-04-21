@@ -19,7 +19,12 @@ class CapturePump:
         self._cfg = cfg
         self._state = state
 
+    def _paused(self) -> bool:
+        return (self._cfg.state_dir / "paused").exists()
+
     def tick(self) -> int:
+        if self._paused():
+            return 0
         last_rowid = self._state.get_last_rowid()
         with open_chatdb(self._cfg.chatdb_path) as conn:
             rows = fetch_since(conn, last_rowid=last_rowid, limit=self._cfg.batch_size)

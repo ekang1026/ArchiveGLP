@@ -13,6 +13,7 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import type * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 import type { FirmDeployContext } from './context.js';
+import { lambdaCodeFor } from './lambda-code.js';
 
 export interface ApiProps {
   firm: FirmDeployContext;
@@ -56,10 +57,6 @@ export class Api extends Construct {
       );
     }
 
-    const placeholderCode = lambda.Code.fromInline(
-      "exports.handler = async () => ({ statusCode: 501, body: 'not deployed' });",
-    );
-
     const dbEnv = {
       DB_CLUSTER_ARN: props.dbCluster.clusterArn,
       DB_SECRET_ARN: dbSecret.secretArn,
@@ -74,8 +71,8 @@ export class Api extends Construct {
     });
     this.ingestFn = new lambda.Function(this, 'IngestFn', {
       runtime: lambda.Runtime.NODEJS_22_X,
-      handler: 'ingest.handler',
-      code: placeholderCode,
+      handler: 'index.handler',
+      code: lambdaCodeFor('ingest'),
       timeout: cdk.Duration.seconds(10),
       memorySize: 512,
       environment: {
@@ -96,8 +93,8 @@ export class Api extends Construct {
     });
     this.archiverFn = new lambda.Function(this, 'ArchiverFn', {
       runtime: lambda.Runtime.NODEJS_22_X,
-      handler: 'archiver.handler',
-      code: placeholderCode,
+      handler: 'index.handler',
+      code: lambdaCodeFor('archiver'),
       timeout: cdk.Duration.minutes(2),
       memorySize: 1024,
       environment: {
@@ -139,8 +136,8 @@ export class Api extends Construct {
     });
     this.heartbeatFn = new lambda.Function(this, 'HeartbeatFn', {
       runtime: lambda.Runtime.NODEJS_22_X,
-      handler: 'heartbeat.handler',
-      code: placeholderCode,
+      handler: 'index.handler',
+      code: lambdaCodeFor('heartbeat'),
       timeout: cdk.Duration.seconds(10),
       memorySize: 512,
       environment: {
@@ -165,8 +162,8 @@ export class Api extends Construct {
     });
     this.enrollFn = new lambda.Function(this, 'EnrollFn', {
       runtime: lambda.Runtime.NODEJS_22_X,
-      handler: 'enroll.handler',
-      code: placeholderCode,
+      handler: 'index.handler',
+      code: lambdaCodeFor('enroll'),
       timeout: cdk.Duration.seconds(15),
       memorySize: 512,
       environment: {
@@ -201,8 +198,8 @@ export class Api extends Construct {
     });
     this.authorizerFn = new lambda.Function(this, 'AuthorizerFn', {
       runtime: lambda.Runtime.NODEJS_22_X,
-      handler: 'authorizer.handler',
-      code: placeholderCode,
+      handler: 'index.handler',
+      code: lambdaCodeFor('authorizer'),
       timeout: cdk.Duration.seconds(5),
       memorySize: 512,
       environment: {
@@ -238,8 +235,8 @@ export class Api extends Construct {
     });
     this.adminFn = new lambda.Function(this, 'AdminFn', {
       runtime: lambda.Runtime.NODEJS_22_X,
-      handler: 'admin.handler',
-      code: placeholderCode,
+      handler: 'index.handler',
+      code: lambdaCodeFor('admin'),
       timeout: cdk.Duration.seconds(15),
       memorySize: 512,
       environment: {

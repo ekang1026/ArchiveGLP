@@ -1,0 +1,13 @@
+{
+  "firm": "firm_archdev001",
+  "firms/firm_archdev001": {
+    "firm_id": "firm_archdev001",
+    "display_name": "ArchiveGLP Dev",
+    "retention_years": 3,
+    "legal_hold_default": false,
+    "primary_region": "us-east-1",
+    "replica_region": "us-west-2",
+    "d3p_principal_arn": "arn:aws:iam::111111111111:role/PlaceholderD3P",
+    "account_id": "111111111111"
+  }
+}

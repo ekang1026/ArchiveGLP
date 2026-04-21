@@ -6,6 +6,7 @@ import type * as rds from 'aws-cdk-lib/aws-rds';
 import * as cr from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
 import type { FirmDeployContext } from './context.js';
+import { lambdaCodeFor } from './lambda-code.js';
 
 export interface MigrationsProps {
   firm: FirmDeployContext;
@@ -43,10 +44,8 @@ export class Migrations extends Construct {
 
     this.runnerFn = new lambda.Function(this, 'MigrationFn', {
       runtime: lambda.Runtime.NODEJS_22_X,
-      handler: 'migrate.handler',
-      code: lambda.Code.fromInline(
-        "exports.handler = async () => ({ statusCode: 501, body: 'not deployed' });",
-      ),
+      handler: 'index.handler',
+      code: lambdaCodeFor('migrate'),
       timeout: cdk.Duration.minutes(5),
       memorySize: 1024,
       environment: {

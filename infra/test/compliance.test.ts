@@ -133,18 +133,13 @@ describe('FirmStack compliance posture', () => {
 
   it('provisions the seven data/control-plane Lambdas', () => {
     const template = synth();
-    // 7 app Lambdas + the framework Lambdas that `cdk.custom_resources.Provider`
-    // adds. We assert presence by handler rather than count.
-    for (const handler of [
-      'ingest.handler',
-      'archiver.handler',
-      'heartbeat.handler',
-      'enroll.handler',
-      'authorizer.handler',
-      'admin.handler',
-      'migrate.handler',
-    ]) {
-      template.hasResourceProperties('AWS::Lambda::Function', { Handler: handler });
+    // 7 app Lambdas + framework Lambdas added by cr.Provider. All seven app
+    // Lambdas share handler "index.handler"; differentiate by the
+    // FIRM_ID-scoped log group name which we pin per-Lambda in CDK.
+    for (const name of ['ingest', 'archiver', 'heartbeat', 'enroll', 'authorizer', 'admin', 'migrate']) {
+      template.hasResourceProperties('AWS::Logs::LogGroup', {
+        LogGroupName: `/aws/lambda/archiveglp-firm_testco1-${name}`,
+      });
     }
   });
 

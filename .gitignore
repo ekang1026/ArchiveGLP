@@ -21,6 +21,7 @@ venv/
 # CDK
 cdk.out/
 cdk.context.json
+!infra/cdk.context.json.example
 
 # Env / secrets
 .env

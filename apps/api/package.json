@@ -4,10 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "pnpm build:ingest && pnpm build:archiver && pnpm build:heartbeat",
+    "build": "pnpm build:ingest && pnpm build:archiver && pnpm build:heartbeat && pnpm build:enroll && pnpm build:authorizer",
     "build:ingest": "esbuild src/ingest.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/ingest.mjs --banner:js=\"import{createRequire}from'module';const require=createRequire(import.meta.url);\"",
     "build:archiver": "esbuild src/archiver.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/archiver.mjs --banner:js=\"import{createRequire}from'module';const require=createRequire(import.meta.url);\"",
     "build:heartbeat": "esbuild src/heartbeat.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/heartbeat.mjs --banner:js=\"import{createRequire}from'module';const require=createRequire(import.meta.url);\"",
+    "build:enroll": "esbuild src/enroll.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/enroll.mjs --banner:js=\"import{createRequire}from'module';const require=createRequire(import.meta.url);\"",
+    "build:authorizer": "esbuild src/authorizer.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/authorizer.mjs --banner:js=\"import{createRequire}from'module';const require=createRequire(import.meta.url);\"",
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
     "lint": "biome check src"

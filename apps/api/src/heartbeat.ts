@@ -2,6 +2,7 @@ import { Heartbeat } from '@archiveglp/schema';
 import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda';
 import { z } from 'zod';
 import { Db, num, str, ts } from './lib/db.js';
+import { bodySha256Hex } from './lib/signing.js';
 
 const Env = z.object({
   FIRM_ID: z.string(),
@@ -31,6 +32,12 @@ export async function handle(
   deps: HeartbeatDeps,
 ): Promise<APIGatewayProxyResultV2> {
   if (!event.body) return json(400, { error: 'empty body' });
+
+  const claimed =
+    event.headers['x-archiveglp-body-sha256'] ?? event.headers['X-ArchiveGLP-Body-Sha256'];
+  if (claimed && bodySha256Hex(event.body) !== claimed) {
+    return json(400, { error: 'body hash mismatch' });
+  }
 
   let raw: unknown;
   try {

@@ -7,6 +7,7 @@ import type {
   Context,
 } from 'aws-lambda';
 import { z } from 'zod';
+import { bodySha256Hex } from './lib/signing.js';
 
 const Env = z.object({
   FIRM_ID: z.string(),
@@ -41,6 +42,15 @@ export async function handle(
 ): Promise<APIGatewayProxyResultV2> {
   if (!event.body) {
     return json(400, { error: 'empty body' });
+  }
+
+  // Defense in depth: the authorizer verified the signature against the
+  // CLAIMED body hash; we verify the claim matches actual bytes. Without
+  // this an attacker who got a valid signature could swap the payload.
+  const claimed =
+    event.headers['x-archiveglp-body-sha256'] ?? event.headers['X-ArchiveGLP-Body-Sha256'];
+  if (claimed && bodySha256Hex(event.body) !== claimed) {
+    return json(400, { error: 'body hash mismatch' });
   }
 
   let raw: unknown;

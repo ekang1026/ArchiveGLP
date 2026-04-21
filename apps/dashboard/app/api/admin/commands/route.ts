@@ -1,9 +1,12 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { cookies } from 'next/headers';
 import { recordAudit } from '../../../../lib/audit';
 import { getApiSession } from '../../../../lib/auth';
+import { serverEnv } from '../../../../lib/env';
 import { requireSameOrigin } from '../../../../lib/same-origin';
+import { STEPUP_COOKIE, verifyStepUp } from '../../../../lib/step-up';
 import { serverConfig, serviceClient } from '../../../../lib/supabase';
 
 export const runtime = 'nodejs';
@@ -79,6 +82,24 @@ export async function POST(req: NextRequest) {
       { error: 'confirmation required for destructive action', action },
       { status: 400 },
     );
+  }
+
+  // Destructive actions require a valid step-up cookie bound to the
+  // current session. Forces an attacker with only a stolen cookie to
+  // also re-authenticate before they can fire revoke / rotate_key /
+  // restart_machine. Returns 401 with a known sentinel so the UI can
+  // re-prompt for the step-up password and retry.
+  if (DESTRUCTIVE.has(action)) {
+    const env = serverEnv();
+    const store = await cookies();
+    const token = store.get(STEPUP_COOKIE)?.value;
+    const ok = verifyStepUp(token, session.email, env.SESSION_SECRET);
+    if (!ok) {
+      return NextResponse.json(
+        { error: 'step_up_required', action },
+        { status: 401 },
+      );
+    }
   }
 
   const cfg = serverConfig();

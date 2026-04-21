@@ -76,20 +76,63 @@ export function RemediationPanel(props: Props) {
   const [busy, setBusy] = useState<Action | null>(null);
   const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
+  // Prompts for the step-up password and exchanges it for a
+  // short-lived cookie on /api/admin/step-up. Returns true on
+  // success. Called before destructive commands so a stolen
+  // supervisor cookie alone can't fire a revoke/reboot.
+  async function stepUp(label: string): Promise<boolean> {
+    const pw = window.prompt(
+      `Re-enter supervisor password to authorize "${label}":`,
+    );
+    if (pw === null || pw === '') return false;
+    const res = await fetch('/api/admin/step-up', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: pw }),
+    });
+    if (res.ok) return true;
+    const body = await res.json().catch(() => ({}));
+    setMessage({
+      kind: 'err',
+      text: `Step-up failed: ${body?.error ?? `HTTP ${res.status}`}`,
+    });
+    return false;
+  }
+
+  async function postCommand(action: Action, destructive: boolean): Promise<Response> {
+    return fetch('/api/admin/commands', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        device_id: props.deviceId,
+        action,
+        confirm: destructive ? true : undefined,
+      }),
+    });
+  }
+
   async function issue(action: Action) {
     setBusy(action);
     setMessage(null);
     try {
-      const destructive = SPECS.find((s) => s.action === action)?.destructive;
-      const res = await fetch('/api/admin/commands', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          device_id: props.deviceId,
-          action,
-          confirm: destructive ? true : undefined,
-        }),
-      });
+      const spec = SPECS.find((s) => s.action === action);
+      const destructive = Boolean(spec?.destructive);
+
+      if (destructive) {
+        const granted = await stepUp(spec?.label ?? action);
+        if (!granted) return;
+      }
+
+      let res = await postCommand(action, destructive);
+      // Expired stepup cookie between prompt and POST: re-prompt once.
+      if (res.status === 401 && destructive) {
+        const body = await res.clone().json().catch(() => ({}));
+        if (body?.error === 'step_up_required') {
+          const granted = await stepUp(spec?.label ?? action);
+          if (!granted) return;
+          res = await postCommand(action, destructive);
+        }
+      }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         const errText = body?.error

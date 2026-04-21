@@ -106,18 +106,45 @@ describe('FirmStack compliance posture', () => {
     });
   });
 
-  it('provisions ingest, archiver, heartbeat, enroll, and authorizer Lambdas', () => {
+  it('provisions the seven data/control-plane Lambdas', () => {
     const template = synth();
-    template.resourceCountIs('AWS::Lambda::Function', 5);
+    // 7 app Lambdas + the framework Lambdas that `cdk.custom_resources.Provider`
+    // adds. We assert presence by handler rather than count.
     for (const handler of [
       'ingest.handler',
       'archiver.handler',
       'heartbeat.handler',
       'enroll.handler',
       'authorizer.handler',
+      'admin.handler',
+      'migrate.handler',
     ]) {
       template.hasResourceProperties('AWS::Lambda::Function', { Handler: handler });
     }
+  });
+
+  it('registers a custom resource that triggers the migration runner', () => {
+    const template = synth();
+    template.resourceCountIs('Custom::ArchiveGLPMigrations', 1);
+  });
+
+  it('creates an admin-key Secrets Manager secret bound to the firm', () => {
+    const template = synth();
+    template.hasResourceProperties('AWS::SecretsManager::Secret', {
+      Name: Match.stringLikeRegexp('archiveglp/.+/admin-key'),
+    });
+  });
+
+  it('exposes POST /admin/pending-enrollments as an authenticated-in-code route', () => {
+    const template = synth();
+    const routes = template.findResources('AWS::ApiGatewayV2::Route');
+    const adminRoute = Object.values(routes).find(
+      (r) => (r.Properties as { RouteKey?: string }).RouteKey === 'POST /admin/pending-enrollments',
+    );
+    expect(adminRoute).toBeDefined();
+    // No API Gateway-level authorizer; the Lambda checks the admin key.
+    const auth = (adminRoute!.Properties as { AuthorizationType?: string }).AuthorizationType;
+    expect(auth ?? 'NONE').toBe('NONE');
   });
 
   it('attaches a request-type authorizer with no caching to /v1/ingest and /v1/heartbeat', () => {

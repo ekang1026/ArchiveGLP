@@ -9,6 +9,7 @@ import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import type * as rds from 'aws-cdk-lib/aws-rds';
 import type * as s3 from 'aws-cdk-lib/aws-s3';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import type * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 import type { FirmDeployContext } from './context.js';
@@ -42,6 +43,8 @@ export class Api extends Construct {
   public readonly heartbeatFn: lambda.Function;
   public readonly enrollFn: lambda.Function;
   public readonly authorizerFn: lambda.Function;
+  public readonly adminFn: lambda.Function;
+  public readonly adminKeySecret: secretsmanager.Secret;
 
   constructor(scope: Construct, id: string, props: ApiProps) {
     super(scope, id);
@@ -216,6 +219,51 @@ export class Api extends Construct {
       }),
     );
 
+    // --- Admin key secret + Admin Lambda ---
+    this.adminKeySecret = new secretsmanager.Secret(this, 'AdminKeySecret', {
+      secretName: `archiveglp/${props.firm.firm_id}/admin-key`,
+      description: `Admin API key for ${props.firm.firm_id}. Rotate via Secrets Manager.`,
+      generateSecretString: {
+        passwordLength: 48,
+        excludePunctuation: true,
+        includeSpace: false,
+      },
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    const adminLogs = new logs.LogGroup(this, 'AdminFnLogs', {
+      logGroupName: `/aws/lambda/archiveglp-${props.firm.firm_id}-admin`,
+      retention: logs.RetentionDays.ONE_YEAR,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+    this.adminFn = new lambda.Function(this, 'AdminFn', {
+      runtime: lambda.Runtime.NODEJS_22_X,
+      handler: 'admin.handler',
+      code: placeholderCode,
+      timeout: cdk.Duration.seconds(15),
+      memorySize: 512,
+      environment: {
+        FIRM_ID: props.firm.firm_id,
+        RETENTION_YEARS: String(props.firm.retention_years),
+        ADMIN_KEY_SECRET_ARN: this.adminKeySecret.secretArn,
+        ...dbEnv,
+      },
+      logGroup: adminLogs,
+    });
+    this.adminKeySecret.grantRead(this.adminFn);
+    dbSecret.grantRead(this.adminFn);
+    this.adminFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          'rds-data:BeginTransaction',
+          'rds-data:CommitTransaction',
+          'rds-data:RollbackTransaction',
+          'rds-data:ExecuteStatement',
+        ],
+        resources: [props.dbCluster.clusterArn],
+      }),
+    );
+
     const deviceAuthorizer = new apigwa.HttpLambdaAuthorizer(
       'DeviceSignatureAuthorizer',
       this.authorizerFn,
@@ -261,6 +309,16 @@ export class Api extends Construct {
       authorizer: deviceAuthorizer,
     });
 
+    // Admin route. Admin-key auth lives inside the Lambda (constant-time
+    // header compare against the Secrets Manager value) rather than as a
+    // separate authorizer so the key check + DB write sit in one place.
+    this.httpApi.addRoutes({
+      path: '/admin/pending-enrollments',
+      methods: [apigw.HttpMethod.POST],
+      integration: new apigwi.HttpLambdaIntegration('AdminIntegration', this.adminFn),
+    });
+
     new cdk.CfnOutput(this, 'AgentApiUrl', { value: this.httpApi.apiEndpoint });
+    new cdk.CfnOutput(this, 'AdminKeySecretArn', { value: this.adminKeySecret.secretArn });
   }
 }

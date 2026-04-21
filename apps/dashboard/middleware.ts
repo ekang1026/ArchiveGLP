@@ -13,6 +13,11 @@ const PUBLIC_PATHS = new Set(['/login']);
 
 export function middleware(req: NextRequest): NextResponse {
   const { pathname } = req.nextUrl;
+  // API routes have their own auth model (device signature for /api/v1,
+  // admin key for /api/admin). Never gate them on the supervisor cookie.
+  if (pathname.startsWith('/api/')) {
+    return NextResponse.next();
+  }
   if (
     PUBLIC_PATHS.has(pathname) ||
     pathname.startsWith('/_next') ||

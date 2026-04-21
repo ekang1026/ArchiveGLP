@@ -1,0 +1,45 @@
+node_modules/
+dist/
+build/
+out/
+.next/
+.turbo/
+.cache/
+coverage/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# CDK
+cdk.out/
+cdk.context.json
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.p12
+*.key
+
+# Agent local state (never commit)
+agent-state/
+*.sqlite
+*.sqlite-journal
+!apps/agent/tests/fixtures/*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/

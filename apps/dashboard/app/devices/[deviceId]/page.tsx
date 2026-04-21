@@ -4,6 +4,7 @@ import { recordAudit } from '../../../lib/audit';
 import { requireSession } from '../../../lib/auth';
 import { HEALTH_COLORS, computeHealth, formatAge } from '../../../lib/health';
 import { serverConfig, serviceClient } from '../../../lib/supabase';
+import { CancelCommandButton } from './CancelCommandButton';
 import { RemediationPanel } from './RemediationPanel';
 
 export const dynamic = 'force-dynamic';
@@ -48,7 +49,7 @@ export default async function DevicePage({ params }: PageProps) {
       sb
         .from('pending_command')
         .select(
-          'command_id, action, issued_by, issued_at, delivered_at, completed_at, error, result',
+          'command_id, action, issued_by, issued_at, delivered_at, completed_at, error, result, expires_at',
         )
         .eq('device_id', deviceId)
         .order('issued_at', { ascending: false })
@@ -198,25 +199,47 @@ export default async function DevicePage({ params }: PageProps) {
                 <th style={thStyle}>issued by</th>
                 <th style={thStyle}>issued</th>
                 <th style={thStyle}>delivered</th>
-                <th style={thStyle}>completed</th>
+                <th style={thStyle}>status</th>
                 <th style={thStyle}>result</th>
+                <th style={thStyle} />
               </tr>
             </thead>
             <tbody>
-              {commands.map((c) => (
-                <tr key={c.command_id} style={{ borderTop: '1px solid #eee' }}>
-                  <td style={tdStyle}>{c.action}</td>
-                  <td style={tdStyle}>{c.issued_by}</td>
-                  <td style={tdStyle}>{c.issued_at}</td>
-                  <td style={tdStyle}>{c.delivered_at ?? '—'}</td>
-                  <td style={tdStyle}>
-                    {c.completed_at ?? (c.delivered_at ? 'in-flight' : 'queued')}
-                  </td>
-                  <td style={{ ...tdStyle, color: c.error ? '#9a1c1c' : '#222' }}>
-                    {c.error ? c.error : c.result ? JSON.stringify(c.result) : '—'}
-                  </td>
-                </tr>
-              ))}
+              {commands.map((c) => {
+                const cancelable = !c.delivered_at && !c.completed_at;
+                const statusText = c.completed_at
+                  ? 'completed'
+                  : c.delivered_at
+                    ? 'in-flight'
+                    : 'queued';
+                return (
+                  <tr key={c.command_id} style={{ borderTop: '1px solid #eee' }}>
+                    <td style={tdStyle}>{c.action}</td>
+                    <td style={tdStyle}>{c.issued_by}</td>
+                    <td style={tdStyle}>{c.issued_at}</td>
+                    <td style={tdStyle}>{c.delivered_at ?? '—'}</td>
+                    <td style={tdStyle}>
+                      {statusText}
+                      {cancelable && c.expires_at ? (
+                        <div style={{ color: '#888', fontSize: 11 }}>
+                          expires {c.expires_at}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td style={{ ...tdStyle, color: c.error ? '#9a1c1c' : '#222' }}>
+                      {c.error ? c.error : c.result ? JSON.stringify(c.result) : '—'}
+                    </td>
+                    <td style={tdStyle}>
+                      {cancelable ? (
+                        <CancelCommandButton
+                          commandId={c.command_id}
+                          action={c.action}
+                        />
+                      ) : null}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

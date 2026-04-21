@@ -18,6 +18,7 @@ export const AuditAction = z.enum([
   'messages_export',
   'device_list_view',
   'command_issued',
+  'command_canceled',
   'login',
 ]);
 export type AuditAction = z.infer<typeof AuditAction>;

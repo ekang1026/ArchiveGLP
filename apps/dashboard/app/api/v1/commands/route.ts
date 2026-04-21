@@ -34,13 +34,26 @@ export async function GET(req: NextRequest) {
   const device = auth.device!;
   const sb = serviceClient();
 
+  const nowIso = new Date().toISOString();
   const cutoffIso = new Date(Date.now() - REDELIVERY_WINDOW_SECONDS * 1000).toISOString();
+
+  // Lazy reaper: mark expired-but-unfulfilled commands as failed so
+  // the supervisor table shows *why* they never ran (rather than
+  // staying "queued" forever). Only touches this device's rows so we
+  // can't get hot contention on a global sweep.
+  await sb
+    .from('pending_command')
+    .update({ completed_at: nowIso, error: 'expired' })
+    .eq('device_id', device.device_id)
+    .is('completed_at', null)
+    .lt('expires_at', nowIso);
 
   const { data, error } = await sb
     .from('pending_command')
     .select('command_id, action, parameters, issued_at, delivery_attempts')
     .eq('device_id', device.device_id)
     .is('completed_at', null)
+    .gt('expires_at', nowIso)
     .or(`last_delivered_at.is.null,last_delivered_at.lt.${cutoffIso}`)
     .order('issued_at', { ascending: true })
     .limit(20);
@@ -50,7 +63,6 @@ export async function GET(req: NextRequest) {
   const commands = data ?? [];
 
   if (commands.length > 0) {
-    const nowIso = new Date().toISOString();
     await Promise.all(
       commands.map((c) =>
         sb

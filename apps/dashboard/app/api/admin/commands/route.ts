@@ -45,7 +45,12 @@ const Body = z.object({
   action: Action,
   parameters: z.record(z.unknown()).nullish(),
   confirm: z.boolean().optional(),
+  // Override the 24h default on a per-command basis. Bounded so an
+  // accidental `9999` doesn't create a permanent command.
+  expires_in_hours: z.number().positive().max(24 * 30).optional(),
 });
+
+const DEFAULT_TTL_HOURS = 24;
 
 export async function POST(req: NextRequest) {
   // CSRF: reject before touching cookies/session. The supervisor
@@ -75,7 +80,7 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: 'schema', details: parsed.error.flatten() }, { status: 400 });
   }
-  const { device_id, action, parameters, confirm } = parsed.data;
+  const { device_id, action, parameters, confirm, expires_in_hours } = parsed.data;
 
   if (DESTRUCTIVE.has(action) && !confirm) {
     return NextResponse.json(
@@ -129,6 +134,38 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Duplicate-suppression: if an open (not-yet-completed, not-yet-
+  // expired) command of the same action already exists for this
+  // device, refuse rather than queue a second one. Prevents the
+  // "click Restart three times" storm without blocking the pause ->
+  // resume sequence (those have different actions).
+  const nowIso = new Date().toISOString();
+  const { data: conflict, error: conflictErr } = await sb
+    .from('pending_command')
+    .select('command_id')
+    .eq('device_id', device_id)
+    .eq('action', action)
+    .is('completed_at', null)
+    .gt('expires_at', nowIso)
+    .limit(1)
+    .maybeSingle();
+  if (conflictErr) {
+    return NextResponse.json({ error: conflictErr.message }, { status: 500 });
+  }
+  if (conflict) {
+    return NextResponse.json(
+      {
+        error: 'duplicate_open_command',
+        action,
+        open_command_id: conflict.command_id,
+      },
+      { status: 409 },
+    );
+  }
+
+  const ttlHours = expires_in_hours ?? DEFAULT_TTL_HOURS;
+  const expiresAt = new Date(Date.now() + ttlHours * 3600 * 1000).toISOString();
+
   const { data: inserted, error: insertErr } = await sb
     .from('pending_command')
     .insert({
@@ -137,8 +174,9 @@ export async function POST(req: NextRequest) {
       action,
       parameters: parameters ?? null,
       issued_by: session.email,
+      expires_at: expiresAt,
     })
-    .select('command_id, issued_at')
+    .select('command_id, issued_at, expires_at')
     .single();
   if (insertErr || !inserted) {
     return NextResponse.json({ error: insertErr?.message ?? 'insert failed' }, { status: 500 });

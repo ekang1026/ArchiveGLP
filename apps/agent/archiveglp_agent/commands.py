@@ -11,24 +11,37 @@ result or error. On each tick we:
 
 Supported actions in the MVP:
 
-  resync       Reset the pump checkpoint so the agent re-reads all
-               chat.db rows from the beginning. Used when a supervisor
-               wants to force re-capture after fixing a decoding bug.
-  pause        Stop the pump from enqueueing new messages. Heartbeats
-               continue so the dashboard still sees the device.
-  resume       Clear pause state.
-  revoke       Delete the device private key, enrollment marker, and
-               outbound queue, then exit the process. The device is
-               effectively de-enrolled.
-  rotate_key   Not yet implemented. Returns an error.
-  upgrade      Not yet implemented. Returns an error.
+  resync          Reset the pump checkpoint so the agent re-reads all
+                  chat.db rows from the beginning. Used when a supervisor
+                  wants to force re-capture after fixing a decoding bug.
+  pause           Stop the pump from enqueueing new messages. Heartbeats
+                  continue so the dashboard still sees the device.
+  resume          Clear pause state.
+  revoke          Delete the device private key, enrollment marker, and
+                  outbound queue, then exit the process. The device is
+                  effectively de-enrolled.
+  restart_agent   Ack, then re-exec the agent process in place. Under
+                  launchd the PID persists; manually run, the shell
+                  process is replaced. Either way all in-memory state
+                  (pending queues, SQLite handles) is reset.
+  restart_machine Ack, then shell out to `osascript` to reboot macOS.
+                  Runs as the logged-in user — no sudo, no admin creds.
+                  After reboot, the user must log in again at the
+                  loginwindow (FileVault + no auto-login by design).
+                  Supervisor can VNC in over Tailscale to perform that
+                  login without employee presence.
+  rotate_key      Not yet implemented. Returns an error.
+  upgrade         Not yet implemented. Returns an error.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -137,6 +150,26 @@ class CommandExecutor:
         log.warning("commands.revoke.done", state_dir=str(state_dir))
         return {"revoked": True}
 
+    def _do_restart_machine(self) -> dict[str, Any]:
+        # No sudo, no admin. Works because osascript driving System
+        # Events is privileged enough to request a restart for the
+        # current user session. macOS will tear down apps cleanly.
+        script = 'tell application "System Events" to restart'
+        completed = subprocess.run(
+            ["/usr/bin/osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"osascript restart failed (rc={completed.returncode}): "
+                f"{completed.stderr.strip()}"
+            )
+        log.warning("commands.restart_machine.requested")
+        return {"restart_requested": True}
+
     async def execute(self, command: dict[str, Any]) -> None:
         cid = str(command.get("command_id", ""))
         action = str(command.get("action", ""))
@@ -154,6 +187,35 @@ class CommandExecutor:
                 # After revoke the agent can't sign anything further
                 # (state dir is gone including the device key). Raise
                 # SystemExit so the run loop terminates cleanly.
+                raise SystemExit(0)
+            elif action == "restart_agent":
+                # Ack BEFORE re-exec: after os.execv the Python
+                # interpreter is replaced and any pending HTTP
+                # response would be dropped on the floor. Give the
+                # TCP write a brief moment to flush.
+                await self.ack(cid, result={"restarting": True})
+                await asyncio.sleep(0.5)
+                log.warning(
+                    "commands.restart_agent.execing",
+                    argv=sys.argv,
+                    executable=sys.executable,
+                )
+                # Replace this process image. Under launchd the PID
+                # survives and the service stays "running"; run from
+                # a shell, the shell sees a clean handoff.
+                os.execvp(sys.argv[0], sys.argv)
+                # unreachable
+                return
+            elif action == "restart_machine":
+                # Ack FIRST so the dashboard records the command as
+                # accepted. The reboot itself is asynchronous — macOS
+                # will begin shutdown after osascript returns.
+                await self.ack(cid, result={"restart_requested": True})
+                await asyncio.sleep(1.0)
+                self._do_restart_machine()
+                # The OS will kill us shortly. Exit cleanly in case
+                # the reboot is delayed (e.g. by an open app prompting
+                # the user to save).
                 raise SystemExit(0)
             elif action in {"rotate_key", "upgrade"}:
                 await self.ack(cid, error=f"{action} not implemented")

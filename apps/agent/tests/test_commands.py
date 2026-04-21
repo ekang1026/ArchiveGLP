@@ -100,6 +100,108 @@ async def test_revoke_wipes_state_and_raises_system_exit(agent_cfg, device_key):
 
 
 @pytest.mark.asyncio
+async def test_restart_agent_acks_then_execvps(agent_cfg, device_key, monkeypatch):
+    state = _fresh_state(agent_cfg)
+    execv_calls: list[tuple[str, list[str]]] = []
+
+    def fake_execvp(prog: str, argv: list[str]) -> None:
+        execv_calls.append((prog, list(argv)))
+
+    monkeypatch.setattr("archiveglp_agent.commands.os.execvp", fake_execvp)
+
+    async with httpx.AsyncClient() as client:
+        cmd = CommandExecutor(agent_cfg, state, client, device_key)
+        with respx.mock(base_url=agent_cfg.api_base_url) as m:
+            ack = m.post("/v1/commands").respond(204)
+            await cmd.execute(
+                {"command_id": "00000000-0000-0000-0000-000000000006", "action": "restart_agent"},
+            )
+            assert ack.called
+            assert b'"restarting":true' in ack.calls[0].request.content
+    assert len(execv_calls) == 1
+    state.close()
+
+
+@pytest.mark.asyncio
+async def test_restart_machine_acks_then_runs_osascript_and_exits(
+    agent_cfg, device_key, monkeypatch,
+):
+    import subprocess as _sp
+
+    state = _fresh_state(agent_cfg)
+    run_calls: list[list[str]] = []
+
+    class FakeCompleted:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    def fake_run(args, **kwargs):  # noqa: ANN001, ANN003
+        run_calls.append(list(args))
+        return FakeCompleted()
+
+    monkeypatch.setattr("archiveglp_agent.commands.subprocess.run", fake_run)
+
+    async with httpx.AsyncClient() as client:
+        cmd = CommandExecutor(agent_cfg, state, client, device_key)
+        with respx.mock(base_url=agent_cfg.api_base_url) as m:
+            ack = m.post("/v1/commands").respond(204)
+            with pytest.raises(SystemExit) as exc:
+                await cmd.execute(
+                    {
+                        "command_id": "00000000-0000-0000-0000-000000000007",
+                        "action": "restart_machine",
+                    },
+                )
+            assert exc.value.code == 0
+            assert ack.called
+            assert b'"restart_requested":true' in ack.calls[0].request.content
+
+    assert len(run_calls) == 1
+    assert run_calls[0][0] == "/usr/bin/osascript"
+    assert "restart" in " ".join(run_calls[0])
+    state.close()
+    _ = _sp  # keep reference; subprocess import used for type pinning above
+
+
+@pytest.mark.asyncio
+async def test_restart_machine_osascript_failure_is_reported(
+    agent_cfg, device_key, monkeypatch,
+):
+    state = _fresh_state(agent_cfg)
+
+    class FakeCompleted:
+        returncode = 1
+        stderr = "boom"
+        stdout = ""
+
+    def fake_run(args, **kwargs):  # noqa: ANN001, ANN003
+        return FakeCompleted()
+
+    monkeypatch.setattr("archiveglp_agent.commands.subprocess.run", fake_run)
+
+    async with httpx.AsyncClient() as client:
+        cmd = CommandExecutor(agent_cfg, state, client, device_key)
+        posted: list[bytes] = []
+        with respx.mock(base_url=agent_cfg.api_base_url) as m:
+            route = m.post("/v1/commands").respond(204)
+            # Does NOT raise SystemExit — we fall into the generic
+            # exception handler that acks with {error: ...}.
+            await cmd.execute(
+                {
+                    "command_id": "00000000-0000-0000-0000-000000000008",
+                    "action": "restart_machine",
+                },
+            )
+            posted = [c.request.content for c in route.calls]
+    # First ack is "restart_requested: true"; second ack is the error
+    # from the raised RuntimeError after osascript rc != 0.
+    assert any(b"restart_requested" in p for p in posted)
+    assert any(b"boom" in p for p in posted)
+    state.close()
+
+
+@pytest.mark.asyncio
 async def test_poll_returns_commands_list(agent_cfg, device_key):
     state = _fresh_state(agent_cfg)
     async with httpx.AsyncClient() as client:

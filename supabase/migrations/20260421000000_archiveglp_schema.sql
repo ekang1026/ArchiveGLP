@@ -151,7 +151,7 @@ create table if not exists pending_command (
     command_id    uuid primary key default gen_random_uuid(),
     firm_id       text not null references firm(firm_id),
     device_id     text not null references device(device_id),
-    action        text not null check (action in ('resync', 'pause', 'resume', 'rotate_key', 'revoke', 'upgrade')),
+    action        text not null check (action in ('resync', 'pause', 'resume', 'rotate_key', 'revoke', 'upgrade', 'restart_agent', 'restart_machine')),
     parameters    jsonb,
     issued_by     text not null,
     issued_at     timestamptz not null default now(),

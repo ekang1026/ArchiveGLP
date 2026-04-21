@@ -15,3 +15,15 @@ export async function requireSession(): Promise<Session> {
   if (!session) redirect('/login');
   return session;
 }
+
+/**
+ * Verify session for JSON API routes. Returns the session when valid,
+ * or null when unauthenticated — the caller is responsible for
+ * returning a 401 NextResponse. We don't redirect from JSON endpoints.
+ */
+export async function getApiSession(): Promise<Session | null> {
+  const env = serverEnv();
+  const store = await cookies();
+  const value = store.get(SESSION_COOKIE)?.value;
+  return verify(value, env.SESSION_SECRET);
+}

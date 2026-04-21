@@ -29,10 +29,10 @@ def test_build_heartbeat_reports_queue_depth(agent_cfg):
 
 
 @pytest.mark.asyncio
-async def test_emitter_posts_to_heartbeat_endpoint(agent_cfg):
+async def test_emitter_posts_to_heartbeat_endpoint(agent_cfg, device_key):
     state = State(agent_cfg.state_dir / "agent.sqlite")
     async with httpx.AsyncClient() as client:
-        emitter = HeartbeatEmitter(agent_cfg, state, client)
+        emitter = HeartbeatEmitter(agent_cfg, state, client, device_key)
         with respx.mock(base_url=agent_cfg.api_base_url) as mock:
             route = mock.post("/v1/heartbeat").respond(204)
             status = await emitter.send_once()
@@ -45,10 +45,10 @@ async def test_emitter_posts_to_heartbeat_endpoint(agent_cfg):
 
 
 @pytest.mark.asyncio
-async def test_emitter_returns_negative_on_network_error(agent_cfg):
+async def test_emitter_returns_negative_on_network_error(agent_cfg, device_key):
     state = State(agent_cfg.state_dir / "agent.sqlite")
     async with httpx.AsyncClient() as client:
-        emitter = HeartbeatEmitter(agent_cfg, state, client)
+        emitter = HeartbeatEmitter(agent_cfg, state, client, device_key)
         with respx.mock(base_url=agent_cfg.api_base_url) as mock:
             mock.post("/v1/heartbeat").mock(side_effect=httpx.ConnectError("down"))
             status = await emitter.send_once()

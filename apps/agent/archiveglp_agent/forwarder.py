@@ -9,12 +9,15 @@ from typing import Any
 
 import httpx
 import structlog
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from .checkpoint import State
+from .signing import sign_request
 
 log = structlog.get_logger(__name__)
 
 _MAX_ATTEMPTS = 20
+_INGEST_PATH = "/v1/ingest"
 
 
 def _backoff_seconds(attempt: int) -> int:
@@ -23,10 +26,20 @@ def _backoff_seconds(attempt: int) -> int:
 
 
 class Forwarder:
-    def __init__(self, state: State, api_base_url: str, client: httpx.AsyncClient) -> None:
+    def __init__(
+        self,
+        state: State,
+        api_base_url: str,
+        client: httpx.AsyncClient,
+        device_id: str,
+        private_key: ec.EllipticCurvePrivateKey,
+    ) -> None:
         self._state = state
-        self._url = api_base_url.rstrip("/") + "/v1/ingest"
+        self._base = api_base_url.rstrip("/")
+        self._url = self._base + _INGEST_PATH
         self._client = client
+        self._device_id = device_id
+        self._key = private_key
 
     async def drain_once(self, batch_size: int) -> int:
         """Attempt to send one batch. Returns number of messages sent."""
@@ -49,14 +62,28 @@ class Forwarder:
         envelope = {
             "messages": messages,
             "client_batch_id": str(uuid.uuid4()),
-            # Placeholder: real signature is produced by the Secure Enclave
-            # keyring in a later module. Until then, a stable non-empty string
-            # lets the schema validate.
-            "client_sig": "ecdsa-p256:unsigned-dev",
+            # client_sig is the envelope-level signature from the original
+            # schema; the transport-level signed headers below are what the
+            # authorizer actually verifies. We set this to a stable string
+            # so the Zod envelope validates; server-side auth is the headers.
+            "client_sig": "header-signed-v1",
         }
+        body = json.dumps(envelope, separators=(",", ":")).encode("utf-8")
+        signed = sign_request(
+            self._key,
+            device_id=self._device_id,
+            method="POST",
+            path=_INGEST_PATH,
+            body=body,
+        )
 
         try:
-            resp = await self._client.post(self._url, json=envelope, timeout=30)
+            resp = await self._client.post(
+                self._url,
+                content=body,
+                headers={"content-type": "application/json", **signed.as_dict()},
+                timeout=30,
+            )
         except httpx.HTTPError as exc:
             log.warning("forwarder.network_error", error=str(exc))
             for row in rows:

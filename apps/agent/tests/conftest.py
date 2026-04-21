@@ -108,3 +108,10 @@ def agent_cfg(tmp_path: Path, chatdb_path: Path) -> AgentConfig:
         batch_size=100,
         agent_version="0.0.1-test",
     )
+
+
+@pytest.fixture()
+def device_key():
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    return ec.generate_private_key(ec.SECP256R1())

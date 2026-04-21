@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .keystore import FileKeyStore, KeyStore
+
 
 def _default_chatdb_path() -> Path:
     return Path.home() / "Library" / "Messages" / "chat.db"
@@ -27,6 +29,9 @@ class AgentConfig:
     poll_interval_seconds: float
     batch_size: int
     agent_version: str
+
+    def keystore(self) -> KeyStore:
+        return FileKeyStore(self.state_dir / "device.key")
 
     @classmethod
     def from_env(cls) -> AgentConfig:

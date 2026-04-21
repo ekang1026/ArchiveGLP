@@ -10,13 +10,15 @@ from archiveglp_agent.pump import CapturePump
 
 
 @pytest.mark.asyncio
-async def test_forwarder_sends_and_drains_queue(agent_cfg):
+async def test_forwarder_sends_and_drains_queue(agent_cfg, device_key):
     state = State(agent_cfg.state_dir / "agent.sqlite")
     CapturePump(agent_cfg, state).tick()
     assert state.queue_depth() == 2
 
     async with httpx.AsyncClient() as client:
-        forwarder = Forwarder(state, agent_cfg.api_base_url, client)
+        forwarder = Forwarder(
+            state, agent_cfg.api_base_url, client, agent_cfg.device_id, device_key
+        )
         with respx.mock(base_url=agent_cfg.api_base_url) as mock:
             route = mock.post("/v1/ingest").respond(202, json={"accepted": 2})
             sent = await forwarder.drain_once(batch_size=10)
@@ -24,16 +26,25 @@ async def test_forwarder_sends_and_drains_queue(agent_cfg):
             assert route.called
             assert state.queue_depth() == 0
 
+            # Signed headers were sent on the wire.
+            req = route.calls[0].request
+            assert req.headers["X-ArchiveGLP-Device"] == agent_cfg.device_id
+            assert req.headers["X-ArchiveGLP-Timestamp"]
+            assert req.headers["X-ArchiveGLP-Body-Sha256"]
+            assert req.headers["X-ArchiveGLP-Signature"]
+
     state.close()
 
 
 @pytest.mark.asyncio
-async def test_forwarder_retries_on_5xx(agent_cfg):
+async def test_forwarder_retries_on_5xx(agent_cfg, device_key):
     state = State(agent_cfg.state_dir / "agent.sqlite")
     CapturePump(agent_cfg, state).tick()
 
     async with httpx.AsyncClient() as client:
-        forwarder = Forwarder(state, agent_cfg.api_base_url, client)
+        forwarder = Forwarder(
+            state, agent_cfg.api_base_url, client, agent_cfg.device_id, device_key
+        )
         with respx.mock(base_url=agent_cfg.api_base_url) as mock:
             mock.post("/v1/ingest").respond(503, text="overloaded")
             sent = await forwarder.drain_once(batch_size=10)

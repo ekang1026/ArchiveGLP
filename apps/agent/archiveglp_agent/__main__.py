@@ -12,6 +12,7 @@ import structlog
 from . import __version__
 from .checkpoint import State
 from .config import AgentConfig
+from .enroll import DISCLOSURES, EnrollmentInput, enroll
 from .forwarder import Forwarder
 from .heartbeat import HeartbeatEmitter
 from .pump import CapturePump
@@ -43,11 +44,17 @@ def run() -> None:
     cfg = AgentConfig.from_env()
     state = State(cfg.state_dir / "agent.sqlite")
     pump = CapturePump(cfg, state)
+    keystore = cfg.keystore()
+    if not (cfg.state_dir / "device.key").exists():
+        raise SystemExit(
+            "Device not enrolled. Run `archiveglp-agent enroll` first.",
+        )
+    private_key = keystore.load_or_create()
 
     async def _go() -> None:
         async with httpx.AsyncClient() as client:
-            forwarder = Forwarder(state, cfg.api_base_url, client)
-            heartbeat = HeartbeatEmitter(cfg, state, client)
+            forwarder = Forwarder(state, cfg.api_base_url, client, cfg.device_id, private_key)
+            heartbeat = HeartbeatEmitter(cfg, state, client, private_key)
             await asyncio.gather(
                 pump.run_forever(),
                 forwarder.run_forever(cfg.batch_size),
@@ -60,6 +67,36 @@ def run() -> None:
         log.info("agent.shutdown")
         state.close()
         sys.exit(0)
+
+
+@main.command("enroll")
+@click.option("--pairing-code", prompt="Pairing code from your firm admin")
+@click.option("--email", prompt="Your work email")
+def enroll_cmd(pairing_code: str, email: str) -> None:
+    """First-run device enrollment."""
+    cfg = AgentConfig.from_env()
+    click.echo("ArchiveGLP will capture the following on this Mac:\n")
+    for _, text in DISCLOSURES:
+        click.echo(f"  - {text}\n")
+    typed = click.prompt(
+        "Type your full legal name to attest that you understand and consent",
+    )
+    inp = EnrollmentInput(
+        pairing_code=pairing_code,
+        employee_email=email,
+        employee_full_name_typed=typed,
+    )
+
+    async def _go() -> int:
+        async with httpx.AsyncClient() as client:
+            return await enroll(cfg, cfg.keystore(), inp, client)
+
+    status = asyncio.run(_go())
+    if status // 100 == 2:
+        click.echo("Enrollment accepted. You can now start the agent with `run`.")
+        sys.exit(0)
+    click.echo(f"Enrollment failed with status {status}.", err=True)
+    sys.exit(1)
 
 
 @main.command()

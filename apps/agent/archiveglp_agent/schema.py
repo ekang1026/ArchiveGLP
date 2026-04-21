@@ -84,6 +84,12 @@ class EnrollmentAttestation(BaseModel):
     agent_version: str
 
 
+class EnrollmentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    pairing_code: str = Field(min_length=16, max_length=128)
+    attestation: EnrollmentAttestation
+
+
 AgentStatus = Literal["healthy", "degraded", "tcc_revoked", "chatdb_unreadable", "offline"]
 
 

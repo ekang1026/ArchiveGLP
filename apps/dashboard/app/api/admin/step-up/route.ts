@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
   const res = new NextResponse(null, { status: 204 });
   res.cookies.set(STEPUP_COOKIE, token, {
     httpOnly: true,
-    secure: true,
+    secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
     path: '/',
     maxAge: STEPUP_TTL_SECONDS,

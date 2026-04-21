@@ -18,7 +18,9 @@ export async function loginAction(formData: FormData): Promise<void> {
   const store = await cookies();
   store.set(SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: true,
+    // Prod: require HTTPS. Dev: allow plain HTTP on localhost so the
+    // cookie actually sticks without forcing mkcert / --experimental-https.
+    secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     path: '/',
     maxAge: MAX_AGE_SECONDS,

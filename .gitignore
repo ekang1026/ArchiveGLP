@@ -30,6 +30,7 @@ cdk.context.json
 *.pem
 *.p12
 *.key
+.dev-secrets/
 
 # Agent local state (never commit)
 agent-state/

@@ -14,6 +14,8 @@
   "dependencies": {
     "@archiveglp/schema": "workspace:*",
     "@aws-sdk/client-rds-data": "^3.700.0",
+    "@supabase/ssr": "^0.5.2",
+    "@supabase/supabase-js": "^2.47.10",
     "amazon-cognito-identity-js": "^6.3.14",
     "next": "^15.1.3",
     "react": "^19.0.0",

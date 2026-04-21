@@ -106,15 +106,43 @@ describe('FirmStack compliance posture', () => {
     });
   });
 
-  it('provisions ingest, archiver, and heartbeat Lambdas', () => {
+  it('provisions ingest, archiver, heartbeat, enroll, and authorizer Lambdas', () => {
     const template = synth();
-    template.resourceCountIs('AWS::Lambda::Function', 3);
-    template.hasResourceProperties('AWS::Lambda::Function', {
-      Handler: 'archiver.handler',
+    template.resourceCountIs('AWS::Lambda::Function', 5);
+    for (const handler of [
+      'ingest.handler',
+      'archiver.handler',
+      'heartbeat.handler',
+      'enroll.handler',
+      'authorizer.handler',
+    ]) {
+      template.hasResourceProperties('AWS::Lambda::Function', { Handler: handler });
+    }
+  });
+
+  it('attaches a request-type authorizer with no caching to /v1/ingest and /v1/heartbeat', () => {
+    const template = synth();
+    template.hasResourceProperties('AWS::ApiGatewayV2::Authorizer', {
+      AuthorizerType: 'REQUEST',
+      AuthorizerResultTtlInSeconds: 0,
+      IdentitySource: [
+        '$request.header.X-ArchiveGLP-Device',
+        '$request.header.X-ArchiveGLP-Timestamp',
+        '$request.header.X-ArchiveGLP-Body-Sha256',
+        '$request.header.X-ArchiveGLP-Signature',
+      ],
     });
-    template.hasResourceProperties('AWS::Lambda::Function', {
-      Handler: 'heartbeat.handler',
-    });
+  });
+
+  it('leaves /v1/enroll unauthenticated (pairing code is the only bootstrap)', () => {
+    const template = synth();
+    const routes = template.findResources('AWS::ApiGatewayV2::Route');
+    const enrollRoutes = Object.values(routes).filter(
+      (r) => (r.Properties as { RouteKey?: string }).RouteKey === 'POST /v1/enroll',
+    );
+    expect(enrollRoutes.length).toBe(1);
+    const enroll = enrollRoutes[0]!.Properties as { AuthorizationType?: string };
+    expect(enroll.AuthorizationType ?? 'NONE').toBe('NONE');
   });
 
   it('wires the archiver as an SQS event source', () => {

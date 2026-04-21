@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { recordAudit } from '../../../../lib/audit';
 import { getApiSession } from '../../../../lib/auth';
+import { requireSameOrigin } from '../../../../lib/same-origin';
 import { serverConfig, serviceClient } from '../../../../lib/supabase';
 
 export const runtime = 'nodejs';
@@ -44,6 +45,18 @@ const Body = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  // CSRF: reject before touching cookies/session. The supervisor
+  // cookie is SameSite=Lax which still allows some cross-site POST
+  // vectors; Sec-Fetch-Site + Origin/Referer enforce same-origin at
+  // the application layer.
+  const origin = requireSameOrigin(req);
+  if (!origin.ok) {
+    return NextResponse.json(
+      { error: 'cross-origin request rejected', reason: origin.reason },
+      { status: 403 },
+    );
+  }
+
   const session = await getApiSession();
   if (!session) {
     return NextResponse.json({ error: 'unauthenticated' }, { status: 401 });

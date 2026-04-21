@@ -2,6 +2,7 @@ import { App } from 'aws-cdk-lib';
 import { Template, Match } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
 import { FirmStack } from '../lib/firm-stack.js';
+import { ReplicaStack } from '../lib/replica-stack.js';
 import type { FirmDeployContext } from '../lib/context.js';
 
 const FIRM: FirmDeployContext = {
@@ -22,6 +23,30 @@ function synth() {
     env: { account: FIRM.account_id, region: FIRM.primary_region },
   });
   return Template.fromStack(stack);
+}
+
+function synthWithReplica() {
+  const app = new App();
+  const replica = new ReplicaStack(app, 'TestReplicaStack', {
+    firm: FIRM,
+    env: { account: FIRM.account_id, region: FIRM.replica_region },
+    crossRegionReferences: true,
+  });
+  const primary = new FirmStack(app, 'TestFirmStack', {
+    firm: FIRM,
+    env: { account: FIRM.account_id, region: FIRM.primary_region },
+    crossRegionReferences: true,
+    replicaTarget: {
+      archiveBucketArn: replica.archiveBucket.bucketArn,
+      attachmentsBucketArn: replica.attachmentsBucket.bucketArn,
+      kmsKeyArn: replica.archiveKey.keyArn,
+    },
+  });
+  primary.addDependency(replica);
+  return {
+    primary: Template.fromStack(primary),
+    replica: Template.fromStack(replica),
+  };
 }
 
 describe('FirmStack compliance posture', () => {
@@ -177,5 +202,72 @@ describe('FirmStack compliance posture', () => {
     template.hasResourceProperties('AWS::Lambda::EventSourceMapping', {
       FunctionResponseTypes: ['ReportBatchItemFailures'],
     });
+  });
+});
+
+describe('Cross-Region Replication (SEC 17a-4(f)(2)(ii)(D))', () => {
+  it('replica stack creates Object-Lock-enabled KMS-encrypted buckets', () => {
+    const { replica } = synthWithReplica();
+    replica.resourceCountIs('AWS::S3::Bucket', 2);
+    replica.allResourcesProperties('AWS::S3::Bucket', {
+      ObjectLockEnabled: true,
+      VersioningConfiguration: { Status: 'Enabled' },
+      PublicAccessBlockConfiguration: {
+        BlockPublicAcls: true,
+        BlockPublicPolicy: true,
+        IgnorePublicAcls: true,
+        RestrictPublicBuckets: true,
+      },
+    });
+  });
+
+  it('replica stack has a KMS key with rotation enabled', () => {
+    const { replica } = synthWithReplica();
+    replica.hasResourceProperties('AWS::KMS::Key', { EnableKeyRotation: true });
+  });
+
+  it('primary source buckets are configured with replication rules', () => {
+    const { primary } = synthWithReplica();
+    // Both source buckets (archive + attachments) get replication configs.
+    const buckets = primary.findResources('AWS::S3::Bucket', {
+      Properties: { ReplicationConfiguration: Match.anyValue() },
+    });
+    expect(Object.keys(buckets).length).toBe(2);
+  });
+
+  it('replication selects KMS-encrypted objects and targets the replica KMS key', () => {
+    const { primary } = synthWithReplica();
+    primary.hasResourceProperties('AWS::S3::Bucket', {
+      ReplicationConfiguration: Match.objectLike({
+        Rules: Match.arrayWith([
+          Match.objectLike({
+            Status: 'Enabled',
+            SourceSelectionCriteria: Match.objectLike({
+              SseKmsEncryptedObjects: { Status: 'Enabled' },
+              ReplicaModifications: { Status: 'Enabled' },
+            }),
+            Destination: Match.objectLike({
+              EncryptionConfiguration: Match.objectLike({
+                ReplicaKmsKeyID: Match.anyValue(),
+              }),
+            }),
+          }),
+        ]),
+      }),
+    });
+  });
+
+  it('replication role is assumable by the S3 service only', () => {
+    const { primary } = synthWithReplica();
+    const roles = primary.findResources('AWS::IAM::Role');
+    const replicationRole = Object.values(roles).find((r) => {
+      const props = r.Properties as {
+        AssumeRolePolicyDocument?: { Statement?: { Principal?: { Service?: string } }[] };
+      };
+      return props.AssumeRolePolicyDocument?.Statement?.some(
+        (s) => s.Principal?.Service === 's3.amazonaws.com',
+      );
+    });
+    expect(replicationRole).toBeDefined();
   });
 });

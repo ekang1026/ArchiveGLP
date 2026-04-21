@@ -8,10 +8,16 @@ import { Database } from './db.js';
 import { Auth } from './auth.js';
 import { Migrations } from './migrations.js';
 import { Queue } from './queue.js';
-import { Storage } from './storage.js';
+import { Storage, type ReplicaTarget } from './storage.js';
 
 export interface FirmStackProps extends cdk.StackProps {
   firm: FirmDeployContext;
+  /**
+   * Replica-region bucket + KMS key ARNs produced by the ReplicaStack
+   * in firm.replica_region. Optional for tests that synth only the
+   * primary stack.
+   */
+  replicaTarget?: ReplicaTarget;
 }
 
 /**
@@ -31,7 +37,10 @@ export class FirmStack extends cdk.Stack {
       ],
     });
 
-    const storage = new Storage(this, 'Storage', { firm: props.firm });
+    const storage = new Storage(this, 'Storage', {
+      firm: props.firm,
+      ...(props.replicaTarget ? { replicaTarget: props.replicaTarget } : {}),
+    });
     const queue = new Queue(this, 'Queue', { archiveKey: storage.archiveKey });
     const db = new Database(this, 'Db', { vpc, archiveKey: storage.archiveKey });
     new Auth(this, 'Auth', { firm: props.firm });

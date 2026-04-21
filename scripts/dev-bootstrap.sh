@@ -68,15 +68,31 @@ else
     supabase start
 fi
 
-# Read credentials straight from `supabase status`.
-SB_STATUS="$(supabase status)"
-SB_API_URL="$(echo "$SB_STATUS" | awk -F': *' '/^\s*API URL/ {print $2; exit}')"
-SB_ANON="$(echo   "$SB_STATUS" | awk -F': *' '/^\s*anon key/ {print $2; exit}')"
-SB_SERVICE="$(echo "$SB_STATUS" | awk -F': *' '/^\s*service_role key/ {print $2; exit}')"
-SB_DB_URL="$(echo "$SB_STATUS" | awk -F': *' '/^\s*DB URL/ {print $2; exit}')"
+# Read credentials via `supabase status -o env` which emits stable
+# KEY=value pairs regardless of the fancy box-drawing the plain
+# `supabase status` uses in modern CLI builds.
+SB_ENV="$(supabase status -o env 2>/dev/null || true)"
+if [ -z "$SB_ENV" ]; then
+    c_red "supabase status -o env produced no output."
+    c_red "Your CLI may be too old. Upgrade with: brew upgrade supabase"
+    exit 1
+fi
+
+# Eval the env output into the current shell. Variables exposed:
+#   API_URL, ANON_KEY, SERVICE_ROLE_KEY, DB_URL, plus a handful of
+#   others we don't need. The env format is key=value with no quoting,
+#   safe to eval for local dev.
+eval "$SB_ENV"
+SB_API_URL="${API_URL:-}"
+SB_ANON="${ANON_KEY:-}"
+SB_SERVICE="${SERVICE_ROLE_KEY:-}"
+SB_DB_URL="${DB_URL:-}"
 
 if [ -z "$SB_API_URL" ] || [ -z "$SB_ANON" ] || [ -z "$SB_SERVICE" ] || [ -z "$SB_DB_URL" ]; then
-    c_red "Could not parse supabase status output. Try \`supabase status\` by hand."
+    c_red "Missing one of API_URL / ANON_KEY / SERVICE_ROLE_KEY / DB_URL"
+    c_red "in the output of: supabase status -o env"
+    c_red "Paste the output and re-run."
+    echo "$SB_ENV"
     exit 1
 fi
 c_green "API URL: $SB_API_URL"

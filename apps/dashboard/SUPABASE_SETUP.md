@@ -139,14 +139,11 @@ Queue a `resume` the same way to unpause. Other supported actions:
 
 ## What's NOT built yet in this Supabase path
 
-- **Dashboard pages for Supabase**: `app/messages/`, `app/devices/`
-  still use the AWS-era direct-Data-API code and haven't been
-  rewritten to use the Supabase client. UI will 500 until next slice.
 - **Supabase Auth** for the dashboard. The mock signed-cookie login is
   still what's wired up.
 - **Realtime subscriptions**. Postgres changes publish via Supabase
   Realtime; dashboard hasn't subscribed yet.
-- **Command UI**. For now you issue commands via SQL.
+- **Command UI**. For now you issue commands via the remediation
+  buttons on `/devices/[id]`; no bulk or scheduled-command UI.
 
-Next slice: swap dashboard pages to Supabase client + add realtime +
-add command-issue UI.
+Next slice: Supabase Auth + Realtime.

@@ -25,6 +25,7 @@ import structlog
 from .config import AgentConfig
 from .keystore import KeyStore
 from .schema import EnrollmentAttestation, EnrollmentRequest
+from .server_key import persist_server_key
 
 log = structlog.get_logger(__name__)
 
@@ -111,6 +112,27 @@ async def enroll(
         return -1
 
     if resp.status_code // 100 == 2:
+        # Persist the backend's command-signing public key. This is
+        # our one authenticated shot at distributing it (the pairing
+        # code we just consumed authorized the response). Without
+        # this key the CommandExecutor refuses to run any remediation
+        # — a fail-closed posture against MITM.
+        try:
+            payload = resp.json() if resp.content else {}
+        except ValueError:
+            payload = {}
+        key_id = payload.get("server_command_key_id")
+        spki_b64 = payload.get("server_command_key_spki_b64")
+        if key_id and spki_b64:
+            persist_server_key(cfg.state_dir, key_id, spki_b64)
+            log.info("enroll.server_key_persisted", key_id=key_id)
+        else:
+            # Old dashboard versions returned 204. Don't write the
+            # marker: better to force the operator to upgrade than to
+            # ship a device that cannot verify remediation commands.
+            log.error("enroll.server_key_missing_in_response")
+            return resp.status_code
+
         marker = cfg.state_dir / "enrolled"
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text(req.attestation.attested_at.isoformat())

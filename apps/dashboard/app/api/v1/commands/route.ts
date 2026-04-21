@@ -2,6 +2,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { authenticateAgentRequest } from '../../../../lib/agent-auth';
+import { loadCommandSigner } from '../../../../lib/command-signing';
 import { serviceClient } from '../../../../lib/supabase';
 
 export const runtime = 'nodejs';
@@ -64,9 +65,20 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Strip delivery_attempts from the client-facing response; agent
-  // doesn't need it and it isn't part of the wire contract.
-  const outbound = commands.map(({ delivery_attempts: _a, ...rest }) => rest);
+  // Sign each command before handing it to the agent. The agent
+  // refuses to execute commands that lack a valid signature from the
+  // key_id it recorded at enrollment — this is the sole defense
+  // against a MITM injecting `revoke` / `restart_machine` over a
+  // compromised TLS path.
+  const signer = loadCommandSigner();
+  const outbound = commands.map(({ delivery_attempts: _a, ...rest }) => {
+    const toSign = { ...rest, device_id: device.device_id };
+    return {
+      ...toSign,
+      key_id: signer.keyId,
+      signature_b64: signer.sign(toSign),
+    };
+  });
   return NextResponse.json({ commands: outbound });
 }
 

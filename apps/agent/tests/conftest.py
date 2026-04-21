@@ -116,3 +116,60 @@ def device_key():
     from cryptography.hazmat.primitives.asymmetric import ec
 
     return ec.generate_private_key(ec.SECP256R1())
+
+
+@pytest.fixture()
+def server_signer():
+    """Ephemeral backend command-signing keypair + helper to sign a
+    command payload in the canonical format. Mirrors what the
+    dashboard's `loadCommandSigner()` does for real."""
+    import base64
+    import json
+
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from archiveglp_agent.server_key import (
+        ServerCommandKey,
+        canonical_command_string,
+    )
+
+    _ = json  # used by caller-facing helper below
+    priv = ec.generate_private_key(ec.SECP256R1())
+    pub = priv.public_key()
+    spki_b64 = base64.b64encode(
+        pub.public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    ).decode("ascii")
+    key_id = "test-key-1"
+
+    def sign_command(
+        *,
+        command_id: str,
+        device_id: str,
+        action: str,
+        parameters=None,
+        issued_at: str,
+    ) -> dict:
+        canonical = canonical_command_string(
+            key_id, command_id, device_id, action, parameters, issued_at
+        )
+        sig = priv.sign(canonical, ec.ECDSA(hashes.SHA256()))
+        return {
+            "command_id": command_id,
+            "device_id": device_id,
+            "action": action,
+            "parameters": parameters,
+            "issued_at": issued_at,
+            "key_id": key_id,
+            "signature_b64": base64.b64encode(sig).decode("ascii"),
+        }
+
+    return {
+        "key_id": key_id,
+        "spki_b64": spki_b64,
+        "server_key": ServerCommandKey(key_id=key_id, public_key=pub),
+        "sign": sign_command,
+    }

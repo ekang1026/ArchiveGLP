@@ -51,6 +51,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from .checkpoint import State
 from .config import AgentConfig
+from .server_key import ServerCommandKey, load_server_key
 from .signing import sign_request
 
 log = structlog.get_logger(__name__)
@@ -66,6 +67,7 @@ class CommandExecutor:
         state: State,
         client: httpx.AsyncClient,
         private_key: ec.EllipticCurvePrivateKey,
+        server_key: ServerCommandKey | None = None,
     ) -> None:
         self._cfg = cfg
         self._state = state
@@ -75,6 +77,9 @@ class CommandExecutor:
         # Paused state is held in-memory and on disk so it survives
         # restarts. The pump checks `cfg.state_dir / "paused"`.
         self._paused_marker = cfg.state_dir / "paused"
+        # Server signing key. If None we load it lazily from state
+        # dir. If still missing we fail-closed on every command.
+        self._server_key = server_key if server_key is not None else load_server_key(cfg.state_dir)
 
     async def _signed(self, method: str, path: str, body: bytes) -> dict[str, str]:
         signed = sign_request(
@@ -174,6 +179,53 @@ class CommandExecutor:
         cid = str(command.get("command_id", ""))
         action = str(command.get("action", ""))
         log.info("commands.execute", command_id=cid, action=action)
+
+        # Verify the server's signature over the command payload
+        # before anything else. Fails closed on missing key, missing
+        # signature, wrong key_id, or bad signature. We ack with an
+        # error so the server can flag it — but we never dispatch.
+        sig_b64 = command.get("signature_b64")
+        sig_key_id = command.get("key_id")
+        issued_at = command.get("issued_at")
+        cmd_device_id = command.get("device_id")
+        if self._server_key is None:
+            log.error("commands.reject.no_server_key", command_id=cid)
+            if cid:
+                await self.ack(cid, error="agent has no server command key on file")
+            return
+        if not sig_b64 or not sig_key_id or not issued_at or not cmd_device_id:
+            log.error("commands.reject.missing_signature_fields", command_id=cid)
+            if cid:
+                await self.ack(cid, error="command missing signature fields")
+            return
+        if cmd_device_id != self._cfg.device_id:
+            log.error(
+                "commands.reject.device_id_mismatch",
+                command_id=cid,
+                claimed=cmd_device_id,
+            )
+            if cid:
+                await self.ack(cid, error="command device_id mismatch")
+            return
+        ok = self._server_key.verify(
+            command_id=cid,
+            device_id=cmd_device_id,
+            action=action,
+            parameters=command.get("parameters"),
+            issued_at=str(issued_at),
+            signature_b64=str(sig_b64),
+            key_id=str(sig_key_id),
+        )
+        if not ok:
+            log.error(
+                "commands.reject.bad_signature",
+                command_id=cid,
+                action=action,
+                key_id=sig_key_id,
+            )
+            if cid:
+                await self.ack(cid, error="bad command signature")
+            return
 
         # Idempotency: server may re-deliver commands whose acks were
         # lost. If we already ran this one, re-ack (so the server can

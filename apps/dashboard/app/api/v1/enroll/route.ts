@@ -1,6 +1,7 @@
 import { EnrollmentRequest } from '@archiveglp/schema';
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
+import { loadCommandSigner } from '../../../../lib/command-signing';
 import { serverConfig, serviceClient } from '../../../../lib/supabase';
 
 export const runtime = 'nodejs';
@@ -137,5 +138,19 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  return new NextResponse(null, { status: 204 });
+  // Return the backend's command-signing public key. The pairing code
+  // just got consumed, so this response is the one-shot authenticated
+  // opportunity to hand the key to the agent without TOFU. The agent
+  // persists it and uses it to verify every subsequent remediation
+  // command. Fail closed: if signing is misconfigured, refuse to
+  // enroll — the alternative is enrolling a device that can never
+  // safely accept a remediation command.
+  const signer = loadCommandSigner();
+  return NextResponse.json(
+    {
+      server_command_key_id: signer.keyId,
+      server_command_key_spki_b64: signer.publicKeySpkiB64(),
+    },
+    { status: 200 },
+  );
 }

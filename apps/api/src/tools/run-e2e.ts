@@ -94,7 +94,10 @@ async function buildChatDbFixture(path: string): Promise<void> {
 }
 
 function spawnStub(port: number): ChildProcess {
-  const proc = spawn('pnpm', ['--silent', 'stub'], {
+  // Spawn tsx directly so a SIGINT on teardown doesn't generate a
+  // spurious pnpm ELIFECYCLE message layered on top of our own output.
+  const tsxBin = join(REPO_ROOT, 'apps/api/node_modules/.bin/tsx');
+  const proc = spawn(tsxBin, ['src/tools/stub-server.ts'], {
     cwd: join(REPO_ROOT, 'apps/api'),
     env: { ...process.env, STUB_PORT: String(port) },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -205,7 +208,9 @@ async function main(): Promise<void> {
       }
     } finally {
       run.kill('SIGINT');
-      await new Promise((r) => run.on('close', r));
+      // The agent exits 0 on SIGINT. We ignore its exit code either way
+      // because this is cleanup, not the assertion path.
+      await new Promise<void>((r) => run.on('close', () => r()));
     }
 
     const state = await getState(port);
